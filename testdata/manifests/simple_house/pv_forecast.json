@@ -1,0 +1,20 @@
+{
+  "type": "pv_forecast",
+  "device_id": "pv_roof",
+  "name": "Rooftop PV System",
+  "peak_power_kwp": 9.8,
+  "azimuth_deg": 185,
+  "tilt_deg": 30,
+  "forecast_adapter": "solcast",
+  "forecast_entity": "sensor.solcast_pv_forecast_today",
+  "constraint_endpoints": {},
+  "actions": {},
+  "safe_default": {
+    "script": "script.pv_safe_default",
+    "description": "PV produces freely, no curtailment"
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {"feed_in_tariff_per_kwh": 0.08}
+  }
+}

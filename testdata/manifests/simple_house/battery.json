@@ -1,0 +1,56 @@
+{
+  "type": "battery",
+  "device_id": "house_battery",
+  "name": "House Battery",
+  "capacity_kwh": 10.0,
+  "max_charge_kw": 5.0,
+  "max_discharge_kw": 5.0,
+  "charge_efficiency": 0.95,
+  "discharge_efficiency": 0.95,
+  "min_soc_pct": 10,
+  "max_soc_pct": 95,
+  "constraint_endpoints": {
+    "min_soc_until": ">=1",
+    "forbidden_window": ">=1"
+  },
+  "actions": {
+    "charge": {
+      "script": "script.battery_charge",
+      "verify": {
+        "entity": "sensor.battery_power",
+        "expected": "> 0",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    },
+    "discharge": {
+      "script": "script.battery_discharge",
+      "verify": {
+        "entity": "sensor.battery_power",
+        "expected": "< 0",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    },
+    "idle": {
+      "script": "script.battery_idle",
+      "verify": {
+        "entity": "sensor.battery_power",
+        "expected": "== 0",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    }
+  },
+  "safe_default": {
+    "script": "script.battery_safe_default",
+    "description": "Battery idle, hold current SoC"
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {
+      "charge_cost_per_kwh": 0.01,
+      "discharge_value_per_kwh": 0.01
+    }
+  }
+}

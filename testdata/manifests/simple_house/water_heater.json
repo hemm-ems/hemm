@@ -1,0 +1,58 @@
+{
+  "type": "water_heater",
+  "device_id": "dhw",
+  "name": "Domestic Hot Water Tank",
+  "volume_liters": 200,
+  "max_power_kw": 3.0,
+  "standby_loss_w": 45,
+  "insulation_class": "good",
+  "constraint_endpoints": {
+    "reach_min_temp_once": ">=1",
+    "hold_temp_band": ">=1",
+    "forbidden_window": ">=1"
+  },
+  "actions": {
+    "heat_high": {
+      "script": "script.dhw_force_high_temp",
+      "verify": {
+        "entity": "sensor.dhw_temperature",
+        "expected": ">= 60",
+        "within_seconds": 1800
+      },
+      "timeout_seconds": 1800,
+      "retry": {"max_attempts": 2, "backoff_seconds": 60}
+    },
+    "heat_normal": {
+      "script": "script.dhw_set_normal",
+      "verify": {
+        "entity": "sensor.dhw_setpoint",
+        "expected": "== 50",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    },
+    "off": {
+      "script": "script.dhw_off",
+      "verify": {
+        "entity": "switch.dhw_power",
+        "expected": "== off",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    }
+  },
+  "safe_default": {
+    "script": "script.dhw_safe_default",
+    "description": "Maintain 50°C with factory controller",
+    "verify": {
+      "entity": "sensor.dhw_temperature",
+      "expected": ">= 45",
+      "within_seconds": 300
+    },
+    "timeout_seconds": 600
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {"cost_per_kwh": 0.30}
+  }
+}

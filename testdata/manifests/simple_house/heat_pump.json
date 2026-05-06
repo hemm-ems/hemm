@@ -1,0 +1,54 @@
+{
+  "type": "heat_pump",
+  "device_id": "heat_pump_main",
+  "name": "Main Heat Pump",
+  "max_power_kw": 5.0,
+  "cop_map": [[-15, 2.0], [-10, 2.5], [-5, 3.0], [0, 3.5], [5, 4.0], [10, 4.5], [15, 5.0]],
+  "min_modulation_pct": 30,
+  "defrost_lockout_minutes": 10,
+  "constraint_endpoints": {
+    "hold_temp_band": ">=1",
+    "forbidden_window": ">=1",
+    "min_runtime_per_day": ">=1",
+    "max_runtime_per_day": ">=1"
+  },
+  "actions": {
+    "heat": {
+      "script": "script.hp_heat_mode",
+      "verify": {
+        "entity": "sensor.hp_operating_mode",
+        "expected": "== heating",
+        "within_seconds": 120
+      },
+      "timeout_seconds": 180,
+      "retry": {"max_attempts": 2, "backoff_seconds": 60}
+    },
+    "idle": {
+      "script": "script.hp_idle",
+      "verify": {
+        "entity": "sensor.hp_operating_mode",
+        "expected": "== idle",
+        "within_seconds": 60
+      },
+      "timeout_seconds": 120
+    }
+  },
+  "safe_default": {
+    "script": "script.hp_safe_default",
+    "description": "Hand control back to factory thermostat, maintain 18°C flow temp",
+    "verify": {
+      "entity": "sensor.hp_operating_mode",
+      "expected": "== heating",
+      "within_seconds": 180
+    },
+    "timeout_seconds": 300,
+    "retry": {"max_attempts": 3, "backoff_seconds": 120}
+  },
+  "cost_function": {
+    "type": "piecewise_linear",
+    "parameters": {
+      "breakpoints_kw": [0, 1.5, 3.0, 5.0],
+      "costs_per_kwh": [0, 0.08, 0.10, 0.12]
+    }
+  }
+}

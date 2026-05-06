@@ -21,7 +21,9 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 
-dependencies = []
+dependencies = [
+    "pydantic>=2.7",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -61,10 +63,10 @@ select = [
     "A",      # flake8-builtins
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
-    "TCH",    # flake8-type-checking
+    "TC",     # flake8-type-checking
     "RUF",    # ruff-specific
 ]
-ignore = ["E501"]  # line length handled by formatter
+ignore = ["E501", "TC001", "TC003"]  # line length handled by formatter; TC rules conflict with Pydantic runtime needs
 
 [tool.ruff.lint.isort]
 known-first-party = ["hemm"]

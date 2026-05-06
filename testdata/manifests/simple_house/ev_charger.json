@@ -1,0 +1,45 @@
+{
+  "type": "ev_charger",
+  "device_id": "ev_charger_garage",
+  "name": "Garage EV Charger",
+  "max_charge_kw": 11.0,
+  "min_charge_kw": 1.4,
+  "phases": 3,
+  "plug_state_entity": "binary_sensor.ev_plugged_in",
+  "soc_entity": "sensor.ev_battery_soc",
+  "battery_capacity_kwh": 77.0,
+  "constraint_endpoints": {
+    "min_soc_until": ">=1",
+    "min_energy_until": ">=1",
+    "forbidden_window": ">=1"
+  },
+  "actions": {
+    "charge": {
+      "script": "script.ev_start_charging",
+      "verify": {
+        "entity": "sensor.ev_charger_power",
+        "expected": "> 0",
+        "within_seconds": 60
+      },
+      "timeout_seconds": 120,
+      "retry": {"max_attempts": 2, "backoff_seconds": 30}
+    },
+    "stop": {
+      "script": "script.ev_stop_charging",
+      "verify": {
+        "entity": "sensor.ev_charger_power",
+        "expected": "== 0",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    }
+  },
+  "safe_default": {
+    "script": "script.ev_safe_default",
+    "description": "Stop charging, preserve current SoC"
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {"cost_per_kwh": 0.30}
+  }
+}

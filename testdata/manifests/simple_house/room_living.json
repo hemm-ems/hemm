@@ -1,0 +1,62 @@
+{
+  "type": "room",
+  "device_id": "living_room",
+  "name": "Living Room",
+  "floor_area_m2": 35.0,
+  "thermal_mass_kwh_per_k": 2.5,
+  "u_value_w_per_m2k": 0.35,
+  "window_area_m2": 8.0,
+  "south_facing_windows": true,
+  "insulation_class": "good",
+  "constraint_endpoints": {
+    "hold_temp_band": ">=1"
+  },
+  "actions": {
+    "heat": {
+      "script": "script.living_room_heat_on",
+      "verify": {
+        "entity": "climate.living_room",
+        "expected": "== heat",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    },
+    "idle": {
+      "script": "script.living_room_heat_off",
+      "verify": {
+        "entity": "climate.living_room",
+        "expected": "== off",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    }
+  },
+  "safe_default": {
+    "script": "script.living_room_safe_default",
+    "description": "Let factory thermostat take over at 18°C",
+    "verify": {
+      "entity": "climate.living_room",
+      "expected": "== heat",
+      "within_seconds": 60
+    },
+    "timeout_seconds": 120
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {"cost_per_kwh": 0.30}
+  },
+  "tiered_config": [
+    {
+      "tier": "beginner",
+      "required_fields": ["floor_area_m2", "insulation_class", "south_facing_windows"],
+      "optional_fields": [],
+      "defaults": {"thermal_mass_kwh_per_k": 2.5, "u_value_w_per_m2k": 0.35}
+    },
+    {
+      "tier": "pro",
+      "required_fields": ["floor_area_m2", "thermal_mass_kwh_per_k", "u_value_w_per_m2k", "window_area_m2"],
+      "optional_fields": ["south_facing_windows"],
+      "defaults": {}
+    }
+  ]
+}
