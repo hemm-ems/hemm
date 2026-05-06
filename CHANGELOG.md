@@ -1,0 +1,18 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - Unreleased
+
+### Added
+
+- Initial project skeleton with `src/hemm/` layout
+- CLI stub (`hemm --help`)
+- Pytest configuration with markers (unit, container, pi, slow)
+- Makefile with canonical targets
+- Ruff + mypy strict configuration
+- Pre-commit hooks
+- GitHub Actions CI
