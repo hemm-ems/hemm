@@ -51,7 +51,7 @@ class SimRunner:
 
     def __init__(
         self,
-        solver: MILPCentralSolver | None = None,
+        solver: Any | None = None,
         outdoor_temp_c: float = 5.0,
     ) -> None:
         self._solver = solver or MILPCentralSolver(outdoor_temp_c=outdoor_temp_c)

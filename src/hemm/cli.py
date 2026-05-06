@@ -40,6 +40,15 @@ def main(argv: list[str] | None = None) -> int:
     sim_run_parser = sim_subparsers.add_parser("run", help="Run a scenario file")
     sim_run_parser.add_argument("scenario", help="Path to scenario YAML file")
     sim_run_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    sim_run_parser.add_argument(
+        "--solver", choices=["milp_central", "distributed"], default="milp_central", help="Solver backend"
+    )
+
+    # Compare command
+    compare_parser = sim_subparsers.add_parser("compare", help="A/B comparison of solver backends")
+    compare_parser.add_argument("scenarios", nargs="+", help="Scenario YAML files to compare")
+    compare_parser.add_argument("--output", "-o", help="Output file (CSV or Markdown based on extension)")
+    compare_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     args = parser.parse_args(argv)
 
@@ -129,8 +138,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_sim(args: argparse.Namespace) -> int:
     """Run simulation scenarios."""
+    if args.sim_command == "compare":
+        return _cmd_sim_compare(args)
+
     if args.sim_command != "run":
-        print("Usage: hemm sim run <scenario.yaml>", file=sys.stderr)
+        print("Usage: hemm sim run <scenario.yaml> | hemm sim compare <scenarios...>", file=sys.stderr)
         return 1
 
     from hemm.sim.runner import SimRunner
@@ -138,6 +150,7 @@ def _cmd_sim(args: argparse.Namespace) -> int:
 
     scenario_path: str = args.scenario
     verbose: bool = args.verbose
+    solver_name: str = args.solver
 
     try:
         scenario = load_scenario(scenario_path)
@@ -150,8 +163,20 @@ def _cmd_sim(args: argparse.Namespace) -> int:
         print(f"  Devices: {len(scenario.manifests)}")
         print(f"  Horizon: {scenario.horizon_hours}h @ {scenario.resolution_minutes}min")
         print(f"  Days: {scenario.days}")
+        print(f"  Solver: {solver_name}")
 
-    runner = SimRunner()
+    # Select solver
+    solver: object
+    if solver_name == "distributed":
+        from hemm.solvers.distributed import DistributedSolver
+
+        solver = DistributedSolver()
+    else:
+        from hemm.solvers.milp_central import MILPCentralSolver
+
+        solver = MILPCentralSolver()
+
+    runner = SimRunner(solver=solver)
     result = runner.run(scenario)
 
     if result.success:
@@ -167,6 +192,45 @@ def _cmd_sim(args: argparse.Namespace) -> int:
         if result.error:
             print(f"  Error: {result.error}", file=sys.stderr)
         return 1
+
+
+def _cmd_sim_compare(args: argparse.Namespace) -> int:
+    """Run A/B comparison across scenarios."""
+    import pathlib
+
+    from hemm.sim.comparison import ABComparisonRunner
+    from hemm.sim.scenario import load_scenario
+
+    verbose: bool = args.verbose
+    output_path: str | None = args.output
+
+    scenarios = []
+    for path_str in args.scenarios:
+        try:
+            scenario = load_scenario(path_str)
+            scenarios.append(scenario)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+
+    if verbose:
+        print(f"Comparing {len(scenarios)} scenarios with Backend A (MILP) vs Backend B (Distributed)...")
+
+    runner = ABComparisonRunner()
+    report = runner.compare_scenarios(scenarios)
+
+    # Output
+    if output_path:
+        out = pathlib.Path(output_path)
+        if out.suffix == ".csv":
+            out.write_text(report.to_csv(), encoding="utf-8")
+        else:
+            out.write_text(report.to_markdown(), encoding="utf-8")
+        print(f"Report written to: {output_path}")
+    else:
+        print(report.to_markdown())
+
+    return 0
 
 
 def _get_version() -> str:
