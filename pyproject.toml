@@ -23,6 +23,10 @@ classifiers = [
 
 dependencies = [
     "pydantic>=2.7",
+    "pyomo>=6.7",
+    "highspy>=1.7",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +38,7 @@ dev = [
     "ruff>=0.4",
     "pre-commit>=3.7",
     "hypothesis>=6.100",
+    "types-PyYAML>=6.0",
 ]
 
 [project.scripts]

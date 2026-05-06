@@ -1,0 +1,49 @@
+# Onboarding Scenario — the canonical "first setup" test
+# Includes PV + Battery + EV + Thermostat + dynamic tariff
+# Must solve in < 1 second
+name: onboarding
+description: >
+  Standard onboarding scenario: PV system, house battery, EV charger,
+  and thermostat load with a dynamic electricity tariff. This represents
+  a typical first-time user setup.
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - onboarding
+  - standard
+expected_solve_time_seconds: 1.0
+
+price_profile: default
+price_params:
+  base_price: 0.30
+  peak_price: 0.42
+  off_peak_price: 0.18
+
+weather_profile: default
+weather_params:
+  min_temp_c: 3.0
+  max_temp_c: 11.0
+
+manifests:
+  - ../manifests/simple_house/pv_forecast.json
+  - ../manifests/simple_house/battery.json
+  - ../manifests/simple_house/ev_charger.json
+  - ../manifests/simple_house/thermostat_load.json
+
+constraint_windows:
+  - window_id: ev_morning_charge
+    device_id: ev_charger
+    deadline: "2026-05-07T07:00:00+00:00"
+    requirement:
+      type: min_soc_until
+      min_soc_pct: 80
+    priority_penalty: 5.0
+  - window_id: thermostat_comfort
+    device_id: thermostat_living
+    deadline: "2026-05-07T23:59:00+00:00"
+    requirement:
+      type: hold_temp_band
+      min_temp_c: 20.0
+      max_temp_c: 23.0
+    priority_penalty: 3.0

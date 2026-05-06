@@ -1,0 +1,59 @@
+"""Adapter registry — stores and retrieves forecast/price adapters."""
+
+from __future__ import annotations
+
+from hemm.adapters.protocol import AdapterProtocol
+
+
+class AdapterRegistry:
+    """Registry for forecast and price adapters."""
+
+    def __init__(self) -> None:
+        self._adapters: dict[str, AdapterProtocol] = {}
+
+    def register(self, adapter: AdapterProtocol) -> None:
+        """Register an adapter by its name."""
+        self._adapters[adapter.name] = adapter
+
+    def get(self, name: str) -> AdapterProtocol:
+        """Get an adapter by name.
+
+        Raises:
+            KeyError: If adapter not found.
+        """
+        if name not in self._adapters:
+            msg = f"Adapter '{name}' not registered. Available: {list(self._adapters.keys())}"
+            raise KeyError(msg)
+        return self._adapters[name]
+
+    def list_adapters(self) -> list[str]:
+        """List registered adapter names."""
+        return list(self._adapters.keys())
+
+    def has(self, name: str) -> bool:
+        """Check if an adapter is registered."""
+        return name in self._adapters
+
+
+# Global registry singleton
+_registry: AdapterRegistry | None = None
+
+
+def get_registry() -> AdapterRegistry:
+    """Get the global adapter registry, creating it if needed."""
+    global _registry
+    if _registry is None:
+        _registry = AdapterRegistry()
+        _register_builtin_adapters(_registry)
+    return _registry
+
+
+def _register_builtin_adapters(registry: AdapterRegistry) -> None:
+    """Register built-in adapters."""
+    from hemm.adapters.forecast_solar import ForecastSolarAdapter
+    from hemm.adapters.solcast import SolcastAdapter
+    from hemm.adapters.template import TemplateAdapter
+
+    registry.register(SolcastAdapter())
+    registry.register(ForecastSolarAdapter())
+    registry.register(TemplateAdapter())

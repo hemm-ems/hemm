@@ -1,0 +1,62 @@
+# Full House Scenario — all 7 device types together
+name: full_house
+description: >
+  All 7 manifest types active simultaneously. Tests the solver's ability
+  to handle complex multi-device optimization with interacting constraints.
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - standard
+  - full
+  - slow
+
+price_profile: default
+price_params:
+  base_price: 0.32
+  peak_price: 0.48
+  off_peak_price: 0.18
+
+weather_profile: default
+weather_params:
+  min_temp_c: 0.0
+  max_temp_c: 10.0
+
+manifests:
+  - ../manifests/simple_house/room_living.json
+  - ../manifests/simple_house/thermostat_load.json
+  - ../manifests/simple_house/heat_pump.json
+  - ../manifests/simple_house/water_heater.json
+  - ../manifests/simple_house/battery.json
+  - ../manifests/simple_house/pv_forecast.json
+  - ../manifests/simple_house/ev_charger.json
+
+constraint_windows:
+  - window_id: battery_morning_soc
+    device_id: house_battery
+    deadline: "2026-05-07T07:00:00+00:00"
+    requirement:
+      type: min_soc_until
+      min_soc_pct: 60
+    priority_penalty: 3.0
+  - window_id: ev_departure
+    device_id: ev_charger
+    deadline: "2026-05-07T07:30:00+00:00"
+    requirement:
+      type: min_energy_until
+      min_energy_kwh: 25.0
+    priority_penalty: 7.0
+  - window_id: hp_runtime
+    device_id: heat_pump_main
+    deadline: "2026-05-07T23:59:00+00:00"
+    requirement:
+      type: min_runtime_per_day
+      min_hours: 4
+    priority_penalty: 4.0
+  - window_id: wh_legionella
+    device_id: water_heater_1
+    deadline: "2026-05-07T23:59:00+00:00"
+    requirement:
+      type: reach_min_temp_once
+      target_temp_c: 60.0
+    priority_penalty: 10.0

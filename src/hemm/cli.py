@@ -34,6 +34,13 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser = subparsers.add_parser("validate", help="Validate manifest files")
     validate_parser.add_argument("files", nargs="+", help="Manifest JSON files to validate")
 
+    # Sim command
+    sim_parser = subparsers.add_parser("sim", help="Run simulation scenarios")
+    sim_subparsers = sim_parser.add_subparsers(dest="sim_command")
+    sim_run_parser = sim_subparsers.add_parser("run", help="Run a scenario file")
+    sim_run_parser.add_argument("scenario", help="Path to scenario YAML file")
+    sim_run_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
     args = parser.parse_args(argv)
 
     if args.command == "info":
@@ -45,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "validate":
         return _cmd_validate(args)
+
+    if args.command == "sim":
+        return _cmd_sim(args)
 
     parser.print_help()
     return 0
@@ -115,6 +125,48 @@ def _cmd_validate(args: argparse.Namespace) -> int:
             all_ok = False
 
     return 0 if all_ok else 1
+
+
+def _cmd_sim(args: argparse.Namespace) -> int:
+    """Run simulation scenarios."""
+    if args.sim_command != "run":
+        print("Usage: hemm sim run <scenario.yaml>", file=sys.stderr)
+        return 1
+
+    from hemm.sim.runner import SimRunner
+    from hemm.sim.scenario import load_scenario
+
+    scenario_path: str = args.scenario
+    verbose: bool = args.verbose
+
+    try:
+        scenario = load_scenario(scenario_path)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    if verbose:
+        print(f"Running scenario: {scenario.name}")
+        print(f"  Devices: {len(scenario.manifests)}")
+        print(f"  Horizon: {scenario.horizon_hours}h @ {scenario.resolution_minutes}min")
+        print(f"  Days: {scenario.days}")
+
+    runner = SimRunner()
+    result = runner.run(scenario)
+
+    if result.success:
+        print(f"OK: {result.scenario_name}")
+        print(f"  Solve time: {result.total_solve_time_seconds:.3f}s")
+        print(f"  Total cost: €{result.metrics.total_cost_eur:.2f}")
+        print(f"  Total energy: {result.metrics.total_energy_kwh:.1f} kWh")
+        if result.metrics.solve_times:
+            print(f"  Avg solve: {sum(result.metrics.solve_times) / len(result.metrics.solve_times):.3f}s")
+        return 0
+    else:
+        print(f"FAILED: {result.scenario_name}", file=sys.stderr)
+        if result.error:
+            print(f"  Error: {result.error}", file=sys.stderr)
+        return 1
 
 
 def _get_version() -> str:

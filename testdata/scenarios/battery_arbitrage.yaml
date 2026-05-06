@@ -1,0 +1,29 @@
+# Battery Arbitrage Scenario — charge low, discharge high
+name: battery_arbitrage
+description: >
+  Single battery optimizing against a dynamic tariff.
+  Should charge during solar surplus / off-peak and discharge during peak.
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - standard
+  - battery
+
+price_profile: default
+price_params:
+  base_price: 0.30
+  peak_price: 0.50
+  off_peak_price: 0.15
+
+manifests:
+  - ../manifests/simple_house/battery.json
+
+constraint_windows:
+  - window_id: min_soc_morning
+    device_id: house_battery
+    deadline: "2026-05-07T07:00:00+00:00"
+    requirement:
+      type: min_soc_until
+      min_soc_pct: 50
+    priority_penalty: 2.0

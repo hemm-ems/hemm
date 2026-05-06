@@ -1,0 +1,41 @@
+# Heat Pump Optimization — shift runtime to low-price windows
+name: heat_pump_shift
+description: >
+  Heat pump with COP-dependent efficiency, minimize electricity cost
+  while satisfying comfort constraints and runtime limits.
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - standard
+  - heat_pump
+
+price_profile: default
+price_params:
+  base_price: 0.30
+  peak_price: 0.45
+  off_peak_price: 0.20
+
+weather_profile: default
+weather_params:
+  min_temp_c: -2.0
+  max_temp_c: 6.0
+
+manifests:
+  - ../manifests/simple_house/heat_pump.json
+
+constraint_windows:
+  - window_id: hp_min_runtime
+    device_id: heat_pump_main
+    deadline: "2026-05-07T23:59:00+00:00"
+    requirement:
+      type: min_runtime_per_day
+      min_hours: 6
+    priority_penalty: 4.0
+  - window_id: hp_max_runtime
+    device_id: heat_pump_main
+    deadline: "2026-05-07T23:59:00+00:00"
+    requirement:
+      type: max_runtime_per_day
+      max_hours: 16
+    priority_penalty: 3.0

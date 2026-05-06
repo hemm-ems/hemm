@@ -1,0 +1,35 @@
+# EV Charging Scenario — charge to target SoC by departure
+name: ev_departure
+description: >
+  EV charger must reach 80% SoC by 7:00 AM departure while minimizing
+  cost. Demonstrates min_energy_until constraint.
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - standard
+  - ev
+
+price_profile: default
+price_params:
+  base_price: 0.28
+  peak_price: 0.40
+  off_peak_price: 0.16
+
+manifests:
+  - ../manifests/simple_house/ev_charger.json
+
+constraint_windows:
+  - window_id: ev_departure_target
+    device_id: ev_charger
+    deadline: "2026-05-07T07:00:00+00:00"
+    requirement:
+      type: min_energy_until
+      min_energy_kwh: 30.0
+    priority_penalty: 8.0
+  - window_id: ev_quiet_hours
+    device_id: ev_charger
+    deadline: "2026-05-07T05:00:00+00:00"
+    requirement:
+      type: forbidden_window
+    priority_penalty: 1.0
