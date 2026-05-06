@@ -91,6 +91,7 @@ asyncio_mode = "auto"
 [tool.coverage.run]
 source = ["hemm"]
 branch = true
+omit = ["*/hemm/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 80

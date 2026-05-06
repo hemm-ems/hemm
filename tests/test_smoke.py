@@ -49,3 +49,8 @@ class TestCLI:
         from hemm.cli import main
 
         assert main(["info"]) == 0
+
+    def test_no_command(self) -> None:
+        from hemm.cli import main
+
+        assert main([]) == 0
