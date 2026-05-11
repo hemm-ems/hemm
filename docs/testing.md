@@ -54,6 +54,7 @@ uv run pytest --hypothesis-seed=0
 | `test_consumers.py` | unit | All 7 consumer models respond to price signals, respect constraints, charge/discharge during favorable periods |
 | `test_distributed.py` | unit | Distributed solver (price_iteration & ADMM modes), convergence, constraint handling |
 | `test_comparison.py` | unit | A/B solver comparison runner, metrics, CSV/Markdown reports, all 6 standard scenarios |
+| `test_onboarding_examples.py` | unit | **Mandatory** — onboarding + full house scenarios solve, constraints met, priority ordering correct. These are the living tests for the [onboarding guide](../../ha-hemm/docs/onboarding.md). |
 | `test_sim.py` | slow | Scenario loading, simulation runner, synthetic price/weather generators, all 6 scenarios solve |
 | `test_markers.py` | unit | Marker demonstration |
 | `test_version.py` | unit | Version specifier with Hypothesis |

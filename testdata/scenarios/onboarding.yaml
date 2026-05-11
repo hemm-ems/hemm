@@ -33,14 +33,14 @@ manifests:
 
 constraint_windows:
   - window_id: ev_morning_charge
-    device_id: ev_charger
+    device_id: ev_charger_garage
     deadline: "2026-05-07T07:00:00+00:00"
     requirement:
       type: min_soc_until
       min_soc_pct: 80
     priority_penalty: 5.0
   - window_id: thermostat_comfort
-    device_id: thermostat_living
+    device_id: bathroom_heater
     deadline: "2026-05-07T23:59:00+00:00"
     requirement:
       type: hold_temp_band

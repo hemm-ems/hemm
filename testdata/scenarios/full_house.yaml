@@ -40,7 +40,7 @@ constraint_windows:
       min_soc_pct: 60
     priority_penalty: 3.0
   - window_id: ev_departure
-    device_id: ev_charger
+    device_id: ev_charger_garage
     deadline: "2026-05-07T07:30:00+00:00"
     requirement:
       type: min_energy_until
@@ -54,7 +54,7 @@ constraint_windows:
       min_hours: 4
     priority_penalty: 4.0
   - window_id: wh_legionella
-    device_id: water_heater_1
+    device_id: dhw
     deadline: "2026-05-07T23:59:00+00:00"
     requirement:
       type: reach_min_temp_once
