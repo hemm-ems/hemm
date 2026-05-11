@@ -1,0 +1,112 @@
+name: Patch Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for patch release (optional, shown in tag annotation)"
+        required: false
+        default: ""
+
+concurrency:
+  group: patch-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- Job 0: compute next patch version ----------
+  versions:
+    name: Compute Patch Version
+    runs-on: ubuntu-latest
+    outputs:
+      next-tag: ${{ steps.calc.outputs.next_tag }}
+      next-version: ${{ steps.calc.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next patch version
+        id: calc
+        run: |
+          latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "$latest" ]; then
+            echo "::error::No HA-style tag found (vYYYY.M.PATCH). Run auto-release first."
+            exit 1
+          fi
+          echo "Latest tag: ${latest}"
+          ver=$(echo "$latest" | sed 's/^v//')
+          yyyy=$(echo "$ver" | cut -d. -f1)
+          m=$(echo "$ver" | cut -d. -f2)
+          patch=$(echo "$ver" | cut -d. -f3)
+          next_patch=$((patch + 1))
+          next_tag="v${yyyy}.${m}.${next_patch}"
+          echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
+          echo "next_version=${yyyy}.${m}.${next_patch}" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag does not exist
+        run: |
+          tag="${{ steps.calc.outputs.next_tag }}"
+          if git rev-parse "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "::error::Tag ${tag} already exists"
+            exit 1
+          fi
+          echo "Next patch tag: ${tag}"
+
+  # ---------- Job 1: full test suite ----------
+  test:
+    name: Test
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint
+        run: |
+          uv run ruff check src/ tests/
+          uv run ruff format --check src/ tests/
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Unit tests
+        run: uv run pytest --cov --cov-report=term-missing
+
+      - name: Slow tests
+        run: uv run pytest -m slow --tb=short
+
+  # ---------- Job 2: tag + release ----------
+  release:
+    name: Release ${{ needs.versions.outputs.next-tag }}
+    needs: [versions, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          tag="${{ needs.versions.outputs.next-tag }}"
+          reason="${{ inputs.reason }}"
+          msg="Patch release ${tag}"
+          if [ -n "$reason" ]; then
+            msg="${msg} — ${reason}"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "${msg}"
+          git push origin "${tag}"

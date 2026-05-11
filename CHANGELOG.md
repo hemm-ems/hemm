@@ -5,9 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [Unreleased]
+
+## [2026.5.0] - 2026-05-11
 
 ### Added
+
+- **Mandatory onboarding example tests** (`test_onboarding_examples.py`): 9 tests for onboarding + full_house scenarios, run in default fast suite
+- **CI/CD overhaul**: CodeQL security scanning, auto-release (monthly), patch-release (on demand), hardened dependabot auto-merge, SECURITY.md, README badges
+- **HA-style versioning**: vYYYY.M.PATCH convention (matching HA ecosystem)
+
+### Fixed
+
+- Device ID mismatches in `onboarding.yaml` (`ev_charger` → `ev_charger_garage`, `thermostat_living` → `bathroom_heater`)
+- Device ID mismatches in `full_house.yaml` (`ev_charger` → `ev_charger_garage`, `water_heater_1` → `dhw`)
+
+### Added (Phases 1–3)
 
 - Initial project skeleton with `src/hemm/` layout
 - CLI stub (`hemm --help`)

@@ -1,5 +1,11 @@
 # HEMM — Distributed Energy Optimizer for Home Automation
 
+[![CI](https://github.com/swifty99/hemm/actions/workflows/ci.yml/badge.svg)](https://github.com/swifty99/hemm/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/swifty99/hemm/actions/workflows/codeql.yml/badge.svg)](https://github.com/swifty99/hemm/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/swifty99/hemm)](https://github.com/swifty99/hemm/releases/latest)
+[![License](https://img.shields.io/github/license/swifty99/hemm)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
+
 HEMM optimizes energy consumption across heterogeneous devices in a home (PV, battery, heat pump, EV charger, hot water) using declarative device manifests and mathematical optimization.
 
 ## Quick Start
