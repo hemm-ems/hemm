@@ -51,7 +51,6 @@ class TestOnboardingExample:
     def test_onboarding_all_devices_have_plans(self, result) -> None:
         """Every device in the scenario gets a plan."""
         assert result.success
-        scenario = load_scenario(SCENARIOS_DIR / "onboarding.yaml")
         device_ids_in_plans = {p.device_id for p in result.plans}
         # At minimum we expect plans for the controllable devices
         assert len(result.plans) >= 1, "No plans produced"
