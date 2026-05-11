@@ -6,28 +6,31 @@
 [![License](https://img.shields.io/github/license/swifty99/hemm)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 
-HEMM optimizes energy consumption across heterogeneous devices in a home (PV, battery, heat pump, EV charger, hot water) using declarative device manifests and mathematical optimization.
+> **Beta.** The manifest schema, constraint vocabulary, and solver interface may still change before 1.0. Contributions and code reviews are welcome.
 
-## Quick Start
+> **Home Assistant users:** see [ha-hemm](https://github.com/swifty99/ha-hemm) for the HA integration. This repository is the core Python library — no HA dependency, standalone testable.
+
+HEMM optimizes energy consumption across heterogeneous home devices (PV, battery, heat pump, EV charger, hot water) using declarative device manifests and MILP optimization. Each device declares its constraints, cost function, and actions in a JSON manifest; a central solver reads all manifests and produces 24-hour power plans in 15-minute slots.
+
+## Developer Quick Start
 
 ```bash
-# Install in development mode
 uv venv
 uv pip install -e ".[dev]"
 
-# Run tests
-make test
+make test      # unit tests
+make ci        # lint + type check + test
 
-# Run full CI checks
-make ci
-
-# CLI
 hemm --help
+hemm schema    # list manifest types
+hemm validate <manifest.json>
+hemm sim run <scenario.yaml>
+hemm sim compare <scenario_a.yaml> <scenario_b.yaml>
 ```
 
 ## Development Setup
 
-HEMM is developed alongside its Home Assistant integration (`ha-hemm`). Both repos live under one parent directory:
+HEMM is developed alongside [ha-hemm](https://github.com/swifty99/ha-hemm), the Home Assistant integration. Both repos live under one parent directory:
 
 ```
 ~/dev/hemm/
@@ -44,11 +47,27 @@ uv pip install -e ../hemm
 
 ## Architecture
 
-- **Declarative manifests** — devices describe themselves (constraints, cost functions, actions)
-- **Two solver backends** — Central MILP (default) and Distributed optimization (experimental)
-- **Forecast adapters** — pluggable sources for PV, price, weather
-- **Verification contracts** — every actuator action has expected outcomes
-- **No vendor knowledge in core** — plug points instead of hardcoding
+- **Declarative manifests** — devices describe themselves via a versioned JSON schema (constraints, cost functions, efficiency maps, actuator contracts with expected-outcome verification). The solver has no device-specific code.
+- **Two solver backends** — Central MILP (Pyomo + HiGHS, default) and distributed optimization (experimental, price iteration / ADMM). Both read identical manifests.
+- **Forecast adapters** — pluggable sources for PV and price forecasts (Solcast, Forecast.Solar, template fallback).
+- **Simulation harness** — run scenarios against historical data, compare solver backends, generate Markdown reports.
+- **No vendor knowledge in core** — device quirks belong in HA automations, not here.
+
+## Testing
+
+The test suite has 260+ tests across three levels:
+
+- **Unit tests** cover manifest schema, constraint vocabulary, solver correctness, and forecast adapters. Run with `make test` in under 60 seconds.
+- **Slow tests** (`-m slow`) run multi-day simulations and A/B comparisons between solver backends.
+- **Onboarding scenario tests** (`tests/test_onboarding_examples.py`) verify that the canonical worked examples in the [ha-hemm onboarding guide](https://github.com/swifty99/ha-hemm/blob/main/docs/onboarding.md) solve correctly on every commit. If these tests pass, the guide is accurate.
+
+CI runs on Python 3.12 and 3.13 on every push.
+
+## Contributing
+
+Issues, pull requests, and code reviews are welcome. The project is in early-access beta — feedback on the manifest schema and constraint vocabulary is particularly useful because those are the interfaces that future manifest types and the HA integration depend on.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow details.
 
 ## License
 
