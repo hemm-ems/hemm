@@ -61,9 +61,7 @@ class TestOnboardingExample:
         """Solver status is OPTIMAL or FEASIBLE — never INFEASIBLE/ERROR."""
         assert result.success
         for sr in result.solver_results:
-            assert sr.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE), (
-                f"Unexpected solver status: {sr.status}"
-            )
+            assert sr.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE), f"Unexpected solver status: {sr.status}"
 
     @pytest.mark.unit
     def test_onboarding_constraints_met(self, result) -> None:
@@ -71,14 +69,10 @@ class TestOnboardingExample:
         assert result.success
         device_ids = {p.device_id for p in result.plans}
         # The onboarding scenario has 4 devices; verify the EV is among them
-        assert "ev_charger_garage" in device_ids, (
-            f"EV charger missing from plans. Got: {device_ids}"
-        )
+        assert "ev_charger_garage" in device_ids, f"EV charger missing from plans. Got: {device_ids}"
         # Verify all plans have the expected number of slots (24h / 15min = 96)
         for plan in result.plans:
-            assert len(plan.slots) == 96, (
-                f"{plan.device_id} has {len(plan.slots)} slots, expected 96"
-            )
+            assert len(plan.slots) == 96, f"{plan.device_id} has {len(plan.slots)} slots, expected 96"
         # No constraint violations in metrics
         assert result.metrics.constraint_violations == 0
 
@@ -111,18 +105,14 @@ class TestFullHouseExample:
         assert result.success
         device_ids = {p.device_id for p in result.plans}
         # Full house references 7 manifests; at least the controllable ones get plans
-        assert len(device_ids) >= 3, (
-            f"Expected plans for multiple devices, got {len(device_ids)}: {device_ids}"
-        )
+        assert len(device_ids) >= 3, f"Expected plans for multiple devices, got {len(device_ids)}: {device_ids}"
 
     @pytest.mark.unit
     def test_full_house_solver_status_acceptable(self, result) -> None:
         """Solver status is OPTIMAL or FEASIBLE for all days."""
         assert result.success
         for sr in result.solver_results:
-            assert sr.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE), (
-                f"Unexpected solver status: {sr.status}"
-            )
+            assert sr.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE), f"Unexpected solver status: {sr.status}"
 
     @pytest.mark.unit
     def test_full_house_priority_ordering(self, result) -> None:
@@ -137,14 +127,10 @@ class TestFullHouseExample:
         assert result.success
         device_ids = {p.device_id for p in result.plans}
         # Water heater (dhw) must be in the plan set
-        assert "dhw" in device_ids, (
-            f"Water heater (dhw) missing from plans. Got: {device_ids}"
-        )
+        assert "dhw" in device_ids, f"Water heater (dhw) missing from plans. Got: {device_ids}"
         # All plans have correct slot count
         for plan in result.plans:
-            assert len(plan.slots) == 96, (
-                f"{plan.device_id} has {len(plan.slots)} slots, expected 96"
-            )
+            assert len(plan.slots) == 96, f"{plan.device_id} has {len(plan.slots)} slots, expected 96"
 
     @pytest.mark.unit
     def test_full_house_no_constraint_violations(self, result) -> None:
