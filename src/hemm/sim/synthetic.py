@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+
+from hemm.time import Clock, WallClock
 
 
 def generate_price_series(
@@ -13,6 +15,8 @@ def generate_price_series(
     base_price: float = 0.30,
     peak_price: float = 0.45,
     off_peak_price: float = 0.20,
+    *,
+    clock: Clock | None = None,
 ) -> list[tuple[datetime, float]]:
     """Generate a synthetic electricity price time series.
 
@@ -22,18 +26,21 @@ def generate_price_series(
     - Low prices overnight and midday (solar surplus)
 
     Args:
-        start: Start time (defaults to UTC now, rounded to hour).
+        start: Start time. If None, defaults to `clock.now()` rounded to the
+            hour (and `clock` defaults to `WallClock` for back-compat).
         hours: Number of hours to generate.
         resolution_minutes: Resolution in minutes.
         base_price: Base price in €/kWh.
         peak_price: Peak price in €/kWh.
         off_peak_price: Off-peak price in €/kWh.
+        clock: Time source used only when `start` is None.
 
     Returns:
         List of (timestamp, price_eur_per_kwh) tuples.
     """
     if start is None:
-        start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+        c: Clock = clock if clock is not None else WallClock()
+        start = c.now().replace(minute=0, second=0, microsecond=0)
 
     n_slots = hours * 60 // resolution_minutes
     series: list[tuple[datetime, float]] = []
@@ -61,6 +68,8 @@ def generate_weather_series(
     resolution_minutes: int = 60,
     min_temp_c: float = 2.0,
     max_temp_c: float = 12.0,
+    *,
+    clock: Clock | None = None,
 ) -> list[tuple[datetime, float]]:
     """Generate a synthetic outdoor temperature time series.
 
@@ -69,17 +78,20 @@ def generate_weather_series(
     - Maximum at 15:00
 
     Args:
-        start: Start time.
+        start: Start time. If None, defaults to `clock.now()` rounded to the
+            hour (and `clock` defaults to `WallClock` for back-compat).
         hours: Duration.
         resolution_minutes: Resolution.
         min_temp_c: Minimum daily temperature.
         max_temp_c: Maximum daily temperature.
+        clock: Time source used only when `start` is None.
 
     Returns:
         List of (timestamp, temperature_celsius) tuples.
     """
     if start is None:
-        start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+        c: Clock = clock if clock is not None else WallClock()
+        start = c.now().replace(minute=0, second=0, microsecond=0)
 
     n_slots = hours * 60 // resolution_minutes
     series: list[tuple[datetime, float]] = []

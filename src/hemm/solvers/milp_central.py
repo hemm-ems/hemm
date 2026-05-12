@@ -6,8 +6,7 @@ Features: piecewise-linear efficiency, plan-change penalty.
 
 from __future__ import annotations
 
-import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import pyomo.environ as pyo  # type: ignore[import-untyped]
@@ -31,6 +30,7 @@ from hemm.manifest.types import (
     WaterHeaterManifest,
 )
 from hemm.solvers.protocol import SolverResult, SolverStatus
+from hemm.time import Clock, WallClock
 
 # Default plan-change penalty weight (€/kW² per slot deviation from previous plan)
 PLAN_CHANGE_PENALTY_WEIGHT = 0.01
@@ -91,10 +91,13 @@ class MILPCentralSolver:
         plan_change_penalty: float = PLAN_CHANGE_PENALTY_WEIGHT,
         outdoor_temp_c: float = 5.0,
         time_limit_seconds: float = 60.0,
+        *,
+        clock: Clock | None = None,
     ) -> None:
         self._plan_change_penalty = plan_change_penalty
         self._outdoor_temp_c = outdoor_temp_c
         self._time_limit_seconds = time_limit_seconds
+        self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
     def name(self) -> str:
@@ -111,7 +114,7 @@ class MILPCentralSolver:
         previous_plans: list[PlanMessage] | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
-        start_time = time.monotonic()
+        start_time = self._clock.monotonic()
 
         n_slots = horizon_minutes // resolution_minutes
         if n_slots <= 0:
@@ -121,7 +124,7 @@ class MILPCentralSolver:
         prices = self._align_prices(price_forecast, n_slots, resolution_minutes)
 
         # Build the reference time
-        t0 = price_forecast[0][0] if price_forecast else datetime.now(tz=UTC)
+        t0 = price_forecast[0][0] if price_forecast else self._clock.now()
 
         # Build Pyomo model
         model = pyo.ConcreteModel("hemm_milp_central")
@@ -214,7 +217,7 @@ class MILPCentralSolver:
         except Exception as e:
             return SolverResult(
                 status=SolverStatus.ERROR,
-                solve_time_seconds=time.monotonic() - start_time,
+                solve_time_seconds=self._clock.monotonic() - start_time,
                 diagnostics={"error": str(e)},
             )
 
@@ -223,14 +226,14 @@ class MILPCentralSolver:
         if status in (SolverStatus.INFEASIBLE, SolverStatus.ERROR):
             return SolverResult(
                 status=status,
-                solve_time_seconds=time.monotonic() - start_time,
+                solve_time_seconds=self._clock.monotonic() - start_time,
                 diagnostics={"termination": str(result.solver.termination_condition)},
             )
 
         # Extract plans
         plans = self._extract_plans(model, device_ids, n_slots, t0, resolution_minutes, horizon_minutes)
 
-        solve_time = time.monotonic() - start_time
+        solve_time = self._clock.monotonic() - start_time
         obj_val = pyo.value(model.objective) if model.objective.expr is not None else None
 
         return SolverResult(
@@ -373,7 +376,7 @@ class MILPCentralSolver:
     ) -> list[PlanMessage]:
         """Extract plan messages from the solved model."""
         plans: list[PlanMessage] = []
-        now = datetime.now(tz=UTC)
+        now = self._clock.now()
 
         for did in device_ids:
             slots: list[PlanSlot] = []

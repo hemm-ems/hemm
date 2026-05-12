@@ -1,4 +1,4 @@
-.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean
+.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean check-clock
 
 ## Default: fast unit tests only
 test:
@@ -16,8 +16,17 @@ test-pi:
 test-slow:
 	uv run pytest -m slow
 
-## CI minimum: lint + type check + unit tests
-ci: lint typecheck test
+## CI minimum: lint + type check + clock audit + unit tests
+ci: lint typecheck check-clock test
+
+## Time-warp audit: forbid direct `datetime.now`/`time.monotonic`/`dt_util.utcnow`
+## in domain code. Whitelist: hemm/time/, CLI entry points.
+check-clock:
+	uv run python tools/check_clock.py \
+		--root src/hemm \
+		--allow src/hemm/time \
+		--allow src/hemm/cli.py \
+		--allow src/hemm/__main__.py
 
 ## CI full: ci + container tests
 ci-full: ci test-container

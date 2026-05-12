@@ -7,14 +7,14 @@ Features: operating band, plan-change penalty, ADMM augmented Lagrangian.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanSlot
 from hemm.solvers.consumers import ConsumerModel, get_consumer_model
 from hemm.solvers.protocol import SolverResult, SolverStatus
+from hemm.time import Clock, WallClock
 
 # Convergence tolerance for total power imbalance (kW)
 DEFAULT_CONVERGENCE_TOL = 0.1
@@ -60,6 +60,8 @@ class DistributedSolver:
         plan_change_penalty: float = 0.01,
         outdoor_temp_c: float = 5.0,
         time_limit_seconds: float = 30.0,
+        *,
+        clock: Clock | None = None,
     ) -> None:
         self._max_iterations = max_iterations
         self._convergence_tol = convergence_tol
@@ -69,6 +71,7 @@ class DistributedSolver:
         self._plan_change_penalty = plan_change_penalty
         self._outdoor_temp_c = outdoor_temp_c
         self._time_limit_seconds = time_limit_seconds
+        self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
     def name(self) -> str:
@@ -85,14 +88,14 @@ class DistributedSolver:
         previous_plans: list[PlanMessage] | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
-        start_time = time.monotonic()
+        start_time = self._clock.monotonic()
 
         n_slots = horizon_minutes // resolution_minutes
         if n_slots <= 0:
             return SolverResult(status=SolverStatus.ERROR, diagnostics={"error": "Invalid horizon/resolution"})
 
         # Build time axis
-        t0 = price_forecast[0][0] if price_forecast else datetime.now(tz=UTC)
+        t0 = price_forecast[0][0] if price_forecast else self._clock.now()
         prices = self._align_prices(price_forecast, n_slots)
 
         # Create consumer models for each device
@@ -111,7 +114,7 @@ class DistributedSolver:
             return SolverResult(
                 status=SolverStatus.OPTIMAL,
                 plans=[],
-                solve_time_seconds=time.monotonic() - start_time,
+                solve_time_seconds=self._clock.monotonic() - start_time,
                 iterations=0,
             )
 
@@ -137,7 +140,7 @@ class DistributedSolver:
         final_iteration = 0
 
         for iteration in range(self._max_iterations):
-            if time.monotonic() - start_time > self._time_limit_seconds:
+            if self._clock.monotonic() - start_time > self._time_limit_seconds:
                 break
 
             final_iteration = iteration + 1
@@ -207,7 +210,7 @@ class DistributedSolver:
         # Build plans from final device powers
         plans = self._build_plans(device_powers, consumers, t0, n_slots, resolution_minutes, horizon_minutes)
 
-        solve_time = time.monotonic() - start_time
+        solve_time = self._clock.monotonic() - start_time
 
         # Calculate objective (total energy cost)
         obj_value = sum(
@@ -255,7 +258,7 @@ class DistributedSolver:
     ) -> list[PlanMessage]:
         """Build plan messages from device power allocations."""
         plans: list[PlanMessage] = []
-        now = datetime.now(tz=UTC)
+        now = self._clock.now()
 
         for did, _ in consumers:
             powers = device_powers[did]

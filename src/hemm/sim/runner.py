@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from hemm.constraints import ConstraintWindowManager
@@ -14,6 +13,7 @@ from hemm.sim.scenario import Scenario
 from hemm.sim.synthetic import generate_price_series
 from hemm.solvers.milp_central import MILPCentralSolver
 from hemm.solvers.protocol import SolverResult, SolverStatus
+from hemm.time import Clock, WallClock
 
 
 @dataclass
@@ -53,9 +53,12 @@ class SimRunner:
         self,
         solver: Any | None = None,
         outdoor_temp_c: float = 5.0,
+        *,
+        clock: Clock | None = None,
     ) -> None:
-        self._solver = solver or MILPCentralSolver(outdoor_temp_c=outdoor_temp_c)
-        self._constraint_mgr = ConstraintWindowManager()
+        self._clock: Clock = clock if clock is not None else WallClock()
+        self._solver = solver or MILPCentralSolver(outdoor_temp_c=outdoor_temp_c, clock=self._clock)
+        self._constraint_mgr = ConstraintWindowManager(clock=self._clock)
 
     def run(self, scenario: Scenario) -> SimResult:
         """Run a complete simulation for a scenario.
@@ -66,7 +69,7 @@ class SimRunner:
         Returns:
             SimResult with metrics and plans.
         """
-        start_time = time.monotonic()
+        start_time = self._clock.monotonic()
         metrics = SimMetrics()
 
         # Parse and validate manifests
@@ -93,7 +96,7 @@ class SimRunner:
         all_results: list[SolverResult] = []
         previous_plans: list[PlanMessage] | None = None
 
-        t0 = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        t0 = self._clock.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
         for day in range(scenario.days):
             day_start = t0 + timedelta(days=day)
@@ -140,7 +143,7 @@ class SimRunner:
             else:
                 metrics.constraint_violations += 1
 
-        total_time = time.monotonic() - start_time
+        total_time = self._clock.monotonic() - start_time
 
         return SimResult(
             scenario_name=scenario.name,

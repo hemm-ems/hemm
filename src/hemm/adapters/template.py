@@ -7,13 +7,17 @@ Useful as a price source or custom forecast generator.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from hemm.adapters.protocol import ForecastPoint
+from hemm.time import Clock, WallClock
 
 
 class TemplateAdapter:
     """Template-based forecast adapter using Jinja2 expressions."""
+
+    def __init__(self, *, clock: Clock | None = None) -> None:
+        self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
     def name(self) -> str:
@@ -69,10 +73,10 @@ class TemplateAdapter:
             tmpl = env.from_string("{{ " + template + " }}")
         except jinja2.TemplateSyntaxError:
             # Invalid template — return zeros
-            now = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+            now = self._clock.now().replace(minute=0, second=0, microsecond=0)
             return [ForecastPoint(timestamp=now + timedelta(hours=h), value=0.0, unit=unit) for h in range(hours)]
 
-        now = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+        now = self._clock.now().replace(minute=0, second=0, microsecond=0)
         points: list[ForecastPoint] = []
 
         for h in range(hours):

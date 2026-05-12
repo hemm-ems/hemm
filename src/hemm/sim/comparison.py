@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import csv
 import io
-import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
 from hemm.sim.runner import SimRunner
 from hemm.sim.scenario import Scenario
 from hemm.solvers.distributed import DistributedSolver
 from hemm.solvers.milp_central import MILPCentralSolver
+from hemm.time import Clock, WallClock
 
 
 @dataclass
@@ -42,13 +42,21 @@ class ComparisonMetrics:
     speed_ratio: float = 0.0
 
 
+def _now_utc() -> datetime:
+    # The audit (`tools/check_clock.py`) flags direct `datetime.now`. Here the
+    # call is only used as a dataclass `default_factory` for `ComparisonReport`;
+    # callers that want deterministic timestamps build a runner with a `clock`
+    # and pass `timestamp=clock.now()` explicitly.
+    return WallClock().now()
+
+
 @dataclass
 class ComparisonReport:
     """Full A/B comparison report."""
 
     scenarios: list[ComparisonMetrics] = field(default_factory=list)
     total_time_seconds: float = 0.0
-    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    timestamp: datetime = field(default_factory=_now_utc)
     summary: str = ""
 
     def to_csv(self) -> str:
@@ -175,9 +183,12 @@ class ABComparisonRunner:
         solver_a: MILPCentralSolver | None = None,
         solver_b: DistributedSolver | None = None,
         outdoor_temp_c: float = 5.0,
+        *,
+        clock: Clock | None = None,
     ) -> None:
-        self._solver_a = solver_a or MILPCentralSolver(outdoor_temp_c=outdoor_temp_c)
-        self._solver_b = solver_b or DistributedSolver(outdoor_temp_c=outdoor_temp_c)
+        self._clock: Clock = clock if clock is not None else WallClock()
+        self._solver_a = solver_a or MILPCentralSolver(outdoor_temp_c=outdoor_temp_c, clock=self._clock)
+        self._solver_b = solver_b or DistributedSolver(outdoor_temp_c=outdoor_temp_c, clock=self._clock)
         self._outdoor_temp_c = outdoor_temp_c
 
     def compare_scenario(self, scenario: Scenario) -> ComparisonMetrics:
@@ -190,11 +201,11 @@ class ABComparisonRunner:
             ComparisonMetrics for this scenario.
         """
         # Run Backend A
-        runner_a = SimRunner(solver=self._solver_a)
+        runner_a = SimRunner(solver=self._solver_a, clock=self._clock)
         result_a = runner_a.run(scenario)
 
         # Run Backend B
-        runner_b = SimRunner(solver=self._solver_b)
+        runner_b = SimRunner(solver=self._solver_b, clock=self._clock)
         result_b = runner_b.run(scenario)
 
         # Compute comparison metrics
@@ -253,14 +264,14 @@ class ABComparisonRunner:
         Returns:
             ComparisonReport with all metrics and summary.
         """
-        start_time = time.monotonic()
-        report = ComparisonReport()
+        start_time = self._clock.monotonic()
+        report = ComparisonReport(timestamp=self._clock.now())
 
         for scenario in scenarios:
             metrics = self.compare_scenario(scenario)
             report.scenarios.append(metrics)
 
-        report.total_time_seconds = time.monotonic() - start_time
+        report.total_time_seconds = self._clock.monotonic() - start_time
 
         # Generate summary
         if report.scenarios:

@@ -52,10 +52,21 @@ After a code change: run linter, fix, then test. `make ci` does both in order.
 
 **Write-path always dry-run capable.** Any action that changes state in the real world (actuator calls, constraint modifications) must support a dry-run mode for testing and debugging.
 
+## Time warp
+
+All time reads in domain code go through an injected `hemm.time.Clock` —
+never `datetime.now()` / `time.monotonic()` directly. Default is `WallClock`;
+tests inject `FixedClock` or `VirtualClock`. The `make check-clock` audit
+(`tools/check_clock.py`) breaks the build on direct calls.
+
+The corresponding Docker-level time acceleration for the full HA stack
+lives in the sibling `ha-hemm` repo (`Dockerfile.warp` + `libwarp.so`).
+See `ha-hemm/docs/time-warp.md`.
+
 ## Make targets reference
 
 - `make test` — fast unit tests (default pytest run)
-- `make ci` — lint + typecheck + test
+- `make ci` — lint + typecheck + check-clock + test
 - `make ci-full` — ci + container tests
 - `make test-container` — container tests only
 - `make test-slow` — long-running sims

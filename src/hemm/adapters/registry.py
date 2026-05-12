@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from hemm.adapters.protocol import AdapterProtocol
+from hemm.time import Clock, WallClock
 
 
 class AdapterRegistry:
@@ -39,21 +40,33 @@ class AdapterRegistry:
 _registry: AdapterRegistry | None = None
 
 
-def get_registry() -> AdapterRegistry:
-    """Get the global adapter registry, creating it if needed."""
+def get_registry(*, clock: Clock | None = None) -> AdapterRegistry:
+    """Get the global adapter registry, creating it if needed.
+
+    Args:
+        clock: Time source used when constructing the built-in adapters on
+            first access. Subsequent calls return the cached registry
+            regardless of `clock`. Use `reset_registry()` to discard it.
+    """
     global _registry
     if _registry is None:
         _registry = AdapterRegistry()
-        _register_builtin_adapters(_registry)
+        _register_builtin_adapters(_registry, clock=clock if clock is not None else WallClock())
     return _registry
 
 
-def _register_builtin_adapters(registry: AdapterRegistry) -> None:
+def reset_registry() -> None:
+    """Discard the cached registry (test helper)."""
+    global _registry
+    _registry = None
+
+
+def _register_builtin_adapters(registry: AdapterRegistry, *, clock: Clock) -> None:
     """Register built-in adapters."""
     from hemm.adapters.forecast_solar import ForecastSolarAdapter
     from hemm.adapters.solcast import SolcastAdapter
     from hemm.adapters.template import TemplateAdapter
 
-    registry.register(SolcastAdapter())
-    registry.register(ForecastSolarAdapter())
-    registry.register(TemplateAdapter())
+    registry.register(SolcastAdapter(clock=clock))
+    registry.register(ForecastSolarAdapter(clock=clock))
+    registry.register(TemplateAdapter(clock=clock))
