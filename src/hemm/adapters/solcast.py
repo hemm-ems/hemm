@@ -7,13 +7,17 @@ as a structural adapter that can work with pre-fetched data or HA entities.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from hemm.adapters.protocol import ForecastPoint
+from hemm.time import Clock, WallClock
 
 
 class SolcastAdapter:
     """Solcast PV forecast adapter."""
+
+    def __init__(self, *, clock: Clock | None = None) -> None:
+        self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
     def name(self) -> str:
@@ -61,7 +65,7 @@ class SolcastAdapter:
         """Generate a synthetic solar forecast (bell curve, peaks at noon)."""
         import math
 
-        now = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+        now = self._clock.now().replace(minute=0, second=0, microsecond=0)
         points: list[ForecastPoint] = []
         for h in range(hours):
             t = now + timedelta(hours=h)

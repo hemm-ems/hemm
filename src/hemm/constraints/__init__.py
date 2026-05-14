@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 
 from hemm.manifest.messages import ConstraintWindow
+from hemm.time import Clock, WallClock
 
 
 class ConstraintWindowManager:
@@ -14,8 +15,9 @@ class ConstraintWindowManager:
     Provides add, remove, expire, and query operations for the solver.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Clock | None = None) -> None:
         self._windows: dict[str, ConstraintWindow] = {}
+        self._clock: Clock = clock if clock is not None else WallClock()
 
     def add(self, window: ConstraintWindow) -> None:
         """Add a constraint window.
@@ -23,7 +25,7 @@ class ConstraintWindowManager:
         If a window with the same ID exists, it is replaced.
         """
         if window.created_at is None:
-            window = window.model_copy(update={"created_at": datetime.now(tz=UTC)})
+            window = window.model_copy(update={"created_at": self._clock.now()})
         self._windows[window.window_id] = window
 
     def remove(self, window_id: str) -> ConstraintWindow | None:
@@ -46,13 +48,13 @@ class ConstraintWindowManager:
         - Their TTL has expired (created_at + ttl_seconds < now)
 
         Args:
-            now: Current time (defaults to UTC now).
+            now: Current time (defaults to the injected clock).
 
         Returns:
             List of active windows, sorted by priority_penalty descending.
         """
         if now is None:
-            now = datetime.now(tz=UTC)
+            now = self._clock.now()
 
         active: list[ConstraintWindow] = []
         for window in self._windows.values():
@@ -68,13 +70,13 @@ class ConstraintWindowManager:
         """Remove expired windows and return their IDs.
 
         Args:
-            now: Current time (defaults to UTC now).
+            now: Current time (defaults to the injected clock).
 
         Returns:
             List of expired window IDs that were removed.
         """
         if now is None:
-            now = datetime.now(tz=UTC)
+            now = self._clock.now()
 
         expired_ids: list[str] = []
         for wid, window in list(self._windows.items()):
@@ -121,8 +123,6 @@ class ConstraintWindowManager:
             return True
         # TTL expired
         if window.ttl_seconds is not None and window.created_at is not None:
-            from datetime import timedelta
-
             expiry = window.created_at + timedelta(seconds=window.ttl_seconds)
             if expiry <= now:
                 return True
