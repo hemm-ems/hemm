@@ -12,6 +12,7 @@ from hemm.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
+    PassiveLoadManifest,
     PVForecastManifest,
     RoomManifest,
     ThermostatLoadManifest,
@@ -21,6 +22,7 @@ from hemm.solvers.consumers import (
     BatteryConsumer,
     EVChargerConsumer,
     HeatPumpConsumer,
+    PassiveLoadConsumer,
     PVForecastConsumer,
     RoomConsumer,
     ThermostatConsumer,
@@ -148,6 +150,17 @@ def _make_room() -> RoomManifest:
     )
 
 
+def _make_passive_load() -> PassiveLoadManifest:
+    return PassiveLoadManifest(
+        device_id="passive_1",
+        name="Kitchen & Lighting",
+        typical_daily_kwh=8.0,
+        safe_default={
+            "script": "script.passive_noop",
+        },
+    )
+
+
 class TestGetConsumerModel:
     """Tests for the consumer model factory."""
 
@@ -185,6 +198,11 @@ class TestGetConsumerModel:
     def test_room_returns_room_consumer(self) -> None:
         model = get_consumer_model(_make_room())
         assert isinstance(model, RoomConsumer)
+
+    @pytest.mark.unit
+    def test_passive_load_returns_passive_consumer(self) -> None:
+        model = get_consumer_model(_make_passive_load())
+        assert isinstance(model, PassiveLoadConsumer)
 
 
 class TestBatteryConsumer:
@@ -464,6 +482,37 @@ class TestRoomConsumer:
         consumer = RoomConsumer(_make_room())
         powers = consumer.respond_to_prices(_varying_prices(), N_SLOTS, RESOLUTION, [], T0)
         assert all(p == 0.0 for p in powers)
+
+
+class TestPassiveLoadConsumer:
+    """Tests for passive load consumer model."""
+
+    @pytest.mark.unit
+    def test_responds_with_correct_length(self) -> None:
+        consumer = PassiveLoadConsumer(_make_passive_load())
+        powers = consumer.respond_to_prices(_flat_prices(), N_SLOTS, RESOLUTION, [], T0)
+        assert len(powers) == N_SLOTS
+
+    @pytest.mark.unit
+    def test_flat_constant_power(self) -> None:
+        consumer = PassiveLoadConsumer(_make_passive_load())
+        powers = consumer.respond_to_prices(_varying_prices(), N_SLOTS, RESOLUTION, [], T0)
+        # All slots should be equal (flat profile)
+        assert len(set(powers)) == 1
+
+    @pytest.mark.unit
+    def test_correct_daily_energy(self) -> None:
+        """Total energy over 24h should equal typical_daily_kwh."""
+        consumer = PassiveLoadConsumer(_make_passive_load())
+        powers = consumer.respond_to_prices(_flat_prices(), N_SLOTS, RESOLUTION, [], T0)
+        total_kwh = sum(p * RESOLUTION / 60.0 for p in powers)
+        assert abs(total_kwh - 8.0) < 0.01
+
+    @pytest.mark.unit
+    def test_positive_power(self) -> None:
+        consumer = PassiveLoadConsumer(_make_passive_load())
+        powers = consumer.respond_to_prices(_flat_prices(), N_SLOTS, RESOLUTION, [], T0)
+        assert all(p > 0 for p in powers)
 
 
 class TestPlanChangePenalty:

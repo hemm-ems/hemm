@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanSlot
+from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
 from hemm.solvers.consumers import ConsumerModel, get_consumer_model
 from hemm.solvers.protocol import SolverResult, SolverStatus
 
@@ -205,7 +205,10 @@ class DistributedSolver:
                     coord_prices[t] = max(0.0, coord_prices[t])
 
         # Build plans from final device powers
-        plans = self._build_plans(device_powers, consumers, t0, n_slots, resolution_minutes, horizon_minutes)
+        plans = self._build_plans(
+            device_powers, consumers, t0, n_slots, resolution_minutes, horizon_minutes,
+            constraint_windows=constraint_windows, prices=prices,
+        )
 
         solve_time = time.monotonic() - start_time
 
@@ -252,10 +255,28 @@ class DistributedSolver:
         n_slots: int,
         resolution_minutes: int,
         horizon_minutes: int,
+        *,
+        constraint_windows: list[ConstraintWindow] | None = None,
+        prices: list[float] | None = None,
     ) -> list[PlanMessage]:
-        """Build plan messages from device power allocations."""
+        """Build plan messages from device power allocations with reason annotation."""
         plans: list[PlanMessage] = []
         now = datetime.now(tz=UTC)
+
+        # Pre-compute constrained (device, slot) pairs
+        constrained_slots: set[tuple[str, int]] = set()
+        if constraint_windows:
+            for cw in constraint_windows:
+                deadline_slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
+                for t in range(min(deadline_slot + 1, n_slots)):
+                    constrained_slots.add((cw.device_id, t))
+
+        # Pre-compute cheap price threshold (bottom 25%)
+        cheap_threshold: float | None = None
+        if prices:
+            sorted_prices = sorted(prices)
+            q25_idx = max(0, len(sorted_prices) // 4 - 1)
+            cheap_threshold = sorted_prices[q25_idx]
 
         for did, _ in consumers:
             powers = device_powers[did]
@@ -263,8 +284,12 @@ class DistributedSolver:
             for t in range(n_slots):
                 start = t0 + timedelta(minutes=t * resolution_minutes)
                 end = start + timedelta(minutes=resolution_minutes)
-                mode = "active" if abs(powers[t]) > 0.01 else "idle"
-                slots.append(PlanSlot(start=start, end=end, power_kw=powers[t], mode=mode))
+                power = powers[t]
+                mode = "active" if abs(power) > 0.01 else "idle"
+                reason = self._determine_reason(
+                    did, t, power, constrained_slots, prices, cheap_threshold,
+                )
+                slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 
             plans.append(
                 PlanMessage(
@@ -277,3 +302,35 @@ class DistributedSolver:
             )
 
         return plans
+
+    @staticmethod
+    def _determine_reason(
+        device_id: str,
+        slot_idx: int,
+        power: float,
+        constrained_slots: set[tuple[str, int]],
+        prices: list[float] | None,
+        cheap_threshold: float | None,
+    ) -> PlanReason:
+        """Determine why the solver chose this setpoint for a slot."""
+        if abs(power) < 0.01:
+            return PlanReason.IDLE
+
+        if (device_id, slot_idx) in constrained_slots:
+            return PlanReason.CONSTRAINT
+
+        if power < -0.01:
+            return PlanReason.PV_SURPLUS
+
+        if prices and cheap_threshold is not None and slot_idx < len(prices):
+            if prices[slot_idx] <= cheap_threshold:
+                return PlanReason.CHEAP_GRID
+
+        return PlanReason.CHEAP_GRID
+
+    @staticmethod
+    def _time_to_slot(deadline: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
+        """Convert a datetime to a slot index."""
+        delta = deadline - t0
+        slot = int(delta.total_seconds() / (resolution_minutes * 60))
+        return max(0, min(slot, n_slots - 1))

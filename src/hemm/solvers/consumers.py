@@ -25,6 +25,7 @@ from hemm.manifest.types import (
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
+    PassiveLoadManifest,
     PVForecastManifest,
     RoomManifest,
     ThermostatLoadManifest,
@@ -610,6 +611,43 @@ class RoomConsumer(ConsumerModel):
         return [0.0] * n_slots
 
 
+class PassiveLoadConsumer(ConsumerModel):
+    """Passive load consumer — fixed consumption profile, not steerable.
+
+    Distributes the typical daily kWh evenly across all slots as a fixed
+    positive power draw.  The solver cannot optimize this — it just appears
+    in the power balance as unavoidable consumption.
+    """
+
+    def __init__(self, manifest: PassiveLoadManifest) -> None:
+        self._manifest = manifest
+
+    @property
+    def device_id(self) -> str:
+        return self._manifest.device_id
+
+    @property
+    def device_type(self) -> ManifestType:
+        return ManifestType.PASSIVE_LOAD
+
+    def respond_to_prices(
+        self,
+        prices: list[float],
+        n_slots: int,
+        resolution_minutes: int,
+        constraints: list[ConstraintWindow],
+        t0: datetime,
+        previous_power: list[float] | None = None,
+        plan_change_penalty: float = 0.0,
+    ) -> list[float]:
+        """Passive load: return flat power curve based on typical daily consumption."""
+        horizon_hours = n_slots * resolution_minutes / 60.0
+        daily_fraction = horizon_hours / 24.0
+        total_kwh = self._manifest.typical_daily_kwh * daily_fraction
+        power_kw = total_kwh / horizon_hours if horizon_hours > 0 else 0.0
+        return [power_kw] * n_slots
+
+
 def get_consumer_model(manifest: Any, outdoor_temp_c: float = 5.0) -> ConsumerModel | None:
     """Factory: create the appropriate consumer model for a manifest.
 
@@ -634,4 +672,6 @@ def get_consumer_model(manifest: Any, outdoor_temp_c: float = 5.0) -> ConsumerMo
         return PVForecastConsumer(manifest)
     if isinstance(manifest, RoomManifest):
         return RoomConsumer(manifest)
+    if isinstance(manifest, PassiveLoadManifest):
+        return PassiveLoadConsumer(manifest)
     return None

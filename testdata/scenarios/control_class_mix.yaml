@@ -1,0 +1,43 @@
+# Control Class Mix Scenario — passive, reactive, planned coexist
+name: control_class_mix
+description: >
+  All three control classes in one household. Validates:
+  - Passive device (kitchen loads) gets observation-only plan (0 power)
+  - Reactive device (EV charger) gets optimized plan with reason annotations
+  - Planned device (battery) gets full MILP optimization with reasons
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - standard
+  - control_class
+  - zeitdynamik
+
+price_profile: default
+price_params:
+  base_price: 0.30
+  peak_price: 0.50
+  off_peak_price: 0.15
+
+manifests:
+  - ../manifests/simple_house/battery.json
+  - ../manifests/simple_house/ev_charger.json
+  - ../manifests/simple_house/kitchen_loads.json
+
+constraint_windows:
+  - window_id: ev_departure
+    device_id: ev_charger_garage
+    deadline: "2026-05-07T07:00:00+00:00"
+    requirement:
+      type: min_energy_until
+      min_energy_kwh: 30.0
+    priority_penalty: 5.0
+  - window_id: battery_morning
+    device_id: house_battery
+    deadline: "2026-05-07T06:00:00+00:00"
+    requirement:
+      type: min_soc_until
+      min_soc_pct: 60
+    priority_penalty: 3.0
+
+expected_solve_time_seconds: 5.0

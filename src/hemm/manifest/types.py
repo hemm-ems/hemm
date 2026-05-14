@@ -1,15 +1,32 @@
-"""Device manifest types — the 7 manifest type catalog."""
+"""Device manifest types — the manifest type catalog."""
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 
+class DeviceRole(StrEnum):
+    """Abstract energy role of a device in the home energy system.
+
+    - generator: produces energy (PV, wind, CHP)
+    - adjustable_sink: consumes energy, HEMM can steer (HP, WH, thermostat)
+    - passive_sink: consumes energy, not steerable (kitchen, lighting baseline)
+    - storage: stores and releases energy bidirectionally (battery)
+    - thermal_zone: passive thermal model, no direct power (room)
+    """
+
+    GENERATOR = "generator"
+    ADJUSTABLE_SINK = "adjustable_sink"
+    PASSIVE_SINK = "passive_sink"
+    STORAGE = "storage"
+    THERMAL_ZONE = "thermal_zone"
+
+
 class ManifestType(StrEnum):
-    """The 7 manifest types in HEMM's initial catalog."""
+    """Manifest types in HEMM's catalog."""
 
     ROOM = "room"
     THERMOSTAT_LOAD = "thermostat_load"
@@ -18,6 +35,37 @@ class ManifestType(StrEnum):
     BATTERY = "battery"
     PV_FORECAST = "pv_forecast"
     EV_CHARGER = "ev_charger"
+    PASSIVE_LOAD = "passive_load"
+
+    @property
+    def role(self) -> DeviceRole:
+        """Return the abstract energy role for this manifest type."""
+        return _TYPE_ROLES[self]
+
+
+_TYPE_ROLES: dict[ManifestType, DeviceRole] = {
+    ManifestType.ROOM: DeviceRole.THERMAL_ZONE,
+    ManifestType.THERMOSTAT_LOAD: DeviceRole.ADJUSTABLE_SINK,
+    ManifestType.HEAT_PUMP: DeviceRole.ADJUSTABLE_SINK,
+    ManifestType.WATER_HEATER: DeviceRole.ADJUSTABLE_SINK,
+    ManifestType.BATTERY: DeviceRole.STORAGE,
+    ManifestType.PV_FORECAST: DeviceRole.GENERATOR,
+    ManifestType.EV_CHARGER: DeviceRole.ADJUSTABLE_SINK,
+    ManifestType.PASSIVE_LOAD: DeviceRole.PASSIVE_SINK,
+}
+
+
+class ControlClass(StrEnum):
+    """Control class determines how HEMM treats a device and which HA-side pattern applies.
+
+    - passive: observe only, never steer, never replan (e.g. kettle, oven)
+    - reactive: publish setpoint + envelope, HA does sub-second loop (e.g. wallbox PWM)
+    - planned: full optimization, HA watchdog calls hemm.replan on drift (e.g. heat pump, battery)
+    """
+
+    PASSIVE = "passive"
+    REACTIVE = "reactive"
+    PLANNED = "planned"
 
 
 class RetryPolicy(BaseModel):
@@ -69,6 +117,10 @@ class _ManifestBase(BaseModel):
 
     device_id: str = Field(description="Unique device identifier within the HEMM instance")
     name: str = Field(description="Human-readable device name")
+    control_class: ControlClass = Field(
+        default=ControlClass.PLANNED,
+        description="Control class: passive (observe), reactive (envelope), planned (full optimization)",
+    )
     constraint_endpoints: dict[str, str] = Field(
         default_factory=dict,
         description="Supported constraint types with version specifiers, e.g. {'hold_temp_band': '>=1'}",
@@ -77,6 +129,12 @@ class _ManifestBase(BaseModel):
     safe_default: Action = Field(description="Mandatory fallback action on HEMM failure")
     cost_function: CostFunction | None = None
     tiered_config: list[TieredConfigHint] = Field(default_factory=list)
+    envelope_tolerance_pct: float = Field(
+        default=15.0,
+        ge=0,
+        le=100,
+        description="Envelope tolerance in percent (Phase 2 — not yet used by solver)",
+    )
 
     @model_validator(mode="after")
     def _validate_safe_default_has_script(self) -> _ManifestBase:
@@ -121,6 +179,12 @@ class HeatPumpManifest(_ManifestBase):
     vendor_model: str | None = Field(default=None, description="Vendor model identifier for COP lookup")
     min_modulation_pct: float = Field(default=0, ge=0, le=100)
     defrost_lockout_minutes: float = Field(default=0, ge=0)
+    source_type: Literal["air", "ground", "water"] = Field(
+        default="air", description="Heat source type: air, ground, or water"
+    )
+    sink_type: Literal["air", "water"] = Field(
+        default="water", description="Heat sink type: air (split AC) or water (radiator/floor)"
+    )
 
 
 class WaterHeaterManifest(_ManifestBase):
@@ -148,12 +212,19 @@ class BatteryManifest(_ManifestBase):
 
 
 class PVForecastManifest(_ManifestBase):
-    """PV forecast manifest — PV system with forecast source."""
+    """Generator manifest — PV, wind, or CHP with forecast source.
+
+    Kept as PVForecastManifest for backward compatibility. The source_kind
+    field generalizes this to any non-dispatchable generation source.
+    """
 
     type: ManifestType = ManifestType.PV_FORECAST
     peak_power_kwp: float = Field(gt=0, description="Peak power in kWp")
-    azimuth_deg: float = Field(default=180, ge=0, lt=360, description="Panel azimuth (180=south)")
-    tilt_deg: float = Field(default=30, ge=0, le=90, description="Panel tilt angle")
+    source_kind: Literal["pv", "wind", "chp"] = Field(
+        default="pv", description="Generation source kind: pv, wind, or chp"
+    )
+    azimuth_deg: float | None = Field(default=180, ge=0, lt=360, description="Panel/turbine azimuth (PV/wind only)")
+    tilt_deg: float | None = Field(default=30, ge=0, le=90, description="Panel tilt angle (PV only)")
     forecast_adapter: str = Field(default="solcast", description="Forecast source adapter name")
     forecast_entity: str | None = Field(default=None, description="HA entity for forecast data")
 
@@ -170,6 +241,20 @@ class EVChargerManifest(_ManifestBase):
     battery_capacity_kwh: float | None = Field(default=None, gt=0, description="EV battery capacity")
 
 
+class PassiveLoadManifest(_ManifestBase):
+    """Passive load manifest — non-steerable consumption as forecast input.
+
+    Represents base-load that HEMM cannot control (kitchen, lighting, etc.).
+    The solver subtracts this from available capacity in the power balance.
+    """
+
+    type: ManifestType = ManifestType.PASSIVE_LOAD
+    typical_daily_kwh: float = Field(gt=0, description="Typical daily consumption in kWh")
+    load_profile_entity: str | None = Field(
+        default=None, description="HA entity tracking actual consumption for forecasting"
+    )
+
+
 # Discriminated union of all manifest types
 DeviceManifest = Annotated[
     RoomManifest
@@ -178,6 +263,7 @@ DeviceManifest = Annotated[
     | WaterHeaterManifest
     | BatteryManifest
     | PVForecastManifest
-    | EVChargerManifest,
+    | EVChargerManifest
+    | PassiveLoadManifest,
     Field(discriminator="type"),
 ]

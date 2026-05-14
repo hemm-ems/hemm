@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zeitdynamik-Erweiterung**: `ControlClass` enum (`passive` / `reactive` / `planned`) on all device manifests
+- **Plan reason annotation**: `PlanReason` enum on every `PlanSlot` (`pv_surplus`, `cheap_grid`, `constraint`, `idle`, `manual`, `safety_default`)
+- **Envelope stubs**: `envelope_min_kw` / `envelope_max_kw` fields on `PlanSlot`, `envelope_tolerance_pct` on manifests (Phase 2 — declared, not yet populated)
+- **Solver reason heuristic**: both MILP and Distributed solvers annotate plan slots with reason based on power/price/constraint analysis
+
 ## [2026.5.0] - 2026-05-11
 
 ### Added

@@ -3,10 +3,25 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 from hemm.manifest.constraints import ConstraintRequirement
+
+
+class PlanReason(StrEnum):
+    """Why the solver chose this setpoint for a given slot.
+
+    Published as sensor.hemm_<dev>_reason in HA.
+    """
+
+    PV_SURPLUS = "pv_surplus"
+    CHEAP_GRID = "cheap_grid"
+    MANUAL = "manual"
+    SAFETY_DEFAULT = "safety_default"
+    CONSTRAINT = "constraint"
+    IDLE = "idle"
 
 
 class PlanSlot(BaseModel):
@@ -16,6 +31,10 @@ class PlanSlot(BaseModel):
     end: datetime
     power_kw: float = Field(description="Planned power for this slot (positive=consume, negative=produce)")
     mode: str | None = Field(default=None, description="Operating mode hint, e.g. 'heat', 'cool', 'idle'")
+    reason: PlanReason = Field(default=PlanReason.IDLE, description="Why this setpoint was chosen")
+    # Phase 2 stubs — envelope bounds (populated by coordinator post-solve, not by solver)
+    envelope_min_kw: float | None = Field(default=None, description="Lower envelope bound in kW (Phase 2)")
+    envelope_max_kw: float | None = Field(default=None, description="Upper envelope bound in kW (Phase 2)")
 
 
 class PlanMessage(BaseModel):

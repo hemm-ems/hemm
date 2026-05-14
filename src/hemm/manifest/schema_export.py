@@ -20,6 +20,7 @@ from hemm.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
+    PassiveLoadManifest,
     PVForecastManifest,
     RoomManifest,
     ThermostatLoadManifest,
@@ -34,6 +35,7 @@ _MANIFEST_SCHEMAS: dict[str, type[Any]] = {
     "battery": BatteryManifest,
     "pv_forecast": PVForecastManifest,
     "ev_charger": EVChargerManifest,
+    "passive_load": PassiveLoadManifest,
 }
 
 _CONSTRAINT_SCHEMAS: dict[str, type[Any]] = {

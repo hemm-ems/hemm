@@ -1,0 +1,14 @@
+{
+  "type": "thermostat_load",
+  "device_id": "kitchen_loads",
+  "name": "Kitchen Unplannable Loads",
+  "control_class": "passive",
+  "max_power_kw": 3.5,
+  "hysteresis_k": 0.5,
+  "constraint_endpoints": {},
+  "actions": {},
+  "safe_default": {
+    "script": "script.kitchen_noop",
+    "description": "No action — passive observation only"
+  }
+}

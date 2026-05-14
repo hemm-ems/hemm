@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from hemm.manifest.constraints import ForbiddenWindow, MinEnergyUntil, MinRuntimePerDay, MinSocUntil
-from hemm.manifest.messages import ConstraintWindow
+from hemm.manifest.messages import ConstraintWindow, PlanReason
 from hemm.manifest.types import BatteryManifest, EVChargerManifest, HeatPumpManifest, ThermostatLoadManifest
 from hemm.solvers.milp_central import DEFAULT_COP_MAP, MILPCentralSolver, _piecewise_cop
 from hemm.solvers.protocol import SolverResult, SolverStatus
@@ -383,3 +383,116 @@ class TestMILPCOPIntegration:
         cop = solver.cop_at_temp(hp, outdoor_temp=-5.0)
         # Between (-10, 2.5) and (0, 3.5) -> 3.0
         assert abs(cop - 3.0) < 0.01
+
+
+class TestMILPReasonAnnotation:
+    """Tests for reason annotation in solver output."""
+
+    @pytest.mark.unit
+    def test_plan_slots_have_reason(self) -> None:
+        """Every slot in solver output has a non-None reason."""
+        solver = MILPCentralSolver()
+        battery = _make_battery()
+        prices = _make_price_forecast(96)
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        for plan in result.plans:
+            for slot in plan.slots:
+                assert slot.reason is not None
+                assert slot.reason in PlanReason
+
+    @pytest.mark.unit
+    def test_reason_idle_when_off(self) -> None:
+        """Inactive slots (power ~0, on < 0.5) get reason=idle."""
+        solver = MILPCentralSolver()
+        battery = _make_battery()
+        # Flat prices → some slots will be idle
+        prices = _make_price_forecast(96, base=0.30)
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        plan = result.plans[0]
+        idle_slots = [s for s in plan.slots if abs(s.power_kw) < 0.01]
+        for slot in idle_slots:
+            assert slot.reason == PlanReason.IDLE
+
+    @pytest.mark.unit
+    def test_reason_constraint_when_forced(self) -> None:
+        """Constraint window → affected slots get reason=constraint."""
+        solver = MILPCentralSolver()
+        battery = _make_battery()
+        t0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
+        prices = [(t0 + timedelta(minutes=15 * i), 0.30) for i in range(96)]
+
+        # Force battery to reach 80% SoC by slot 48 (12h)
+        deadline = t0 + timedelta(hours=12)
+        cw = ConstraintWindow(
+            window_id="soc_target",
+            device_id="test_battery",
+            deadline=deadline,
+            requirement=MinSocUntil(min_soc_pct=80),
+            priority_penalty=5.0,
+        )
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        plan = result.plans[0]
+        # At least some active slots before the deadline should be marked 'constraint'
+        constrained_active = [
+            s for i, s in enumerate(plan.slots[:48])
+            if s.reason == PlanReason.CONSTRAINT and abs(s.power_kw) > 0.01
+        ]
+        assert len(constrained_active) > 0
+
+    @pytest.mark.unit
+    def test_reason_cheap_grid_in_valley(self) -> None:
+        """Battery charges in cheap slots → reason=cheap_grid."""
+        solver = MILPCentralSolver()
+        battery = _make_battery()
+        t0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
+        # Create variable prices: cheap at night, expensive during day
+        prices = []
+        for i in range(96):
+            hour = (i * 15) / 60
+            price = 0.15 if hour < 6 or hour >= 22 else 0.45
+            prices.append((t0 + timedelta(minutes=15 * i), price))
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        plan = result.plans[0]
+        # Charging slots (positive power, in cheap time) should be cheap_grid
+        cheap_charging = [
+            s for i, s in enumerate(plan.slots)
+            if s.power_kw > 0.1 and s.reason == PlanReason.CHEAP_GRID
+        ]
+        # Battery should charge during cheap periods
+        assert len(cheap_charging) > 0

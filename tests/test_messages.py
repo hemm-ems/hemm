@@ -13,6 +13,7 @@ from hemm.manifest.constraints import MinSocUntil, ReachMinTempOnce
 from hemm.manifest.messages import (
     ConstraintWindow,
     PlanMessage,
+    PlanReason,
     PlanSlot,
     PriceMessage,
     PriceSlot,
@@ -249,3 +250,51 @@ class TestConflictResolution:
         )
         conflicts = find_conflicts([w1, w2])
         assert len(conflicts) == 0
+
+
+class TestPlanReason:
+    """Tests for PlanReason enum and its use in PlanSlot."""
+
+    @pytest.mark.unit
+    def test_plan_reason_enum_values(self) -> None:
+        """All 6 reason values are present."""
+        expected = {"pv_surplus", "cheap_grid", "manual", "safety_default", "constraint", "idle"}
+        assert {r.value for r in PlanReason} == expected
+
+    @pytest.mark.unit
+    def test_plan_slot_reason_default_idle(self) -> None:
+        """PlanSlot.reason defaults to idle."""
+        now = _utc_now()
+        slot = PlanSlot(start=now, end=now, power_kw=0.0)
+        assert slot.reason == PlanReason.IDLE
+
+    @pytest.mark.unit
+    def test_plan_slot_reason_explicit(self) -> None:
+        """PlanSlot accepts explicit reason."""
+        now = _utc_now()
+        slot = PlanSlot(start=now, end=now, power_kw=5.0, reason="cheap_grid")
+        assert slot.reason == PlanReason.CHEAP_GRID
+
+    @pytest.mark.unit
+    def test_plan_slot_envelope_stubs_default_none(self) -> None:
+        """PlanSlot envelope stubs are None by default."""
+        now = _utc_now()
+        slot = PlanSlot(start=now, end=now, power_kw=1.0)
+        assert slot.envelope_min_kw is None
+        assert slot.envelope_max_kw is None
+
+    @pytest.mark.unit
+    def test_plan_slot_envelope_stubs_settable(self) -> None:
+        """PlanSlot envelope stubs can be set."""
+        now = _utc_now()
+        slot = PlanSlot(start=now, end=now, power_kw=5.0, envelope_min_kw=4.0, envelope_max_kw=6.0)
+        assert slot.envelope_min_kw == 4.0
+        assert slot.envelope_max_kw == 6.0
+
+    @pytest.mark.unit
+    def test_plan_reason_roundtrip(self) -> None:
+        """PlanSlot with reason survives JSON serialization."""
+        now = _utc_now()
+        slot = PlanSlot(start=now, end=now, power_kw=3.0, reason="constraint")
+        restored = PlanSlot.model_validate_json(slot.model_dump_json())
+        assert restored.reason == PlanReason.CONSTRAINT

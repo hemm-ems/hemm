@@ -13,6 +13,7 @@ from hemm.manifest.types import (
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
+    PassiveLoadManifest,
     PVForecastManifest,
     RoomManifest,
     ThermostatLoadManifest,
@@ -37,6 +38,7 @@ _TYPE_TO_MODEL: dict[str, type[Any]] = {
     ManifestType.BATTERY: BatteryManifest,
     ManifestType.PV_FORECAST: PVForecastManifest,
     ManifestType.EV_CHARGER: EVChargerManifest,
+    ManifestType.PASSIVE_LOAD: PassiveLoadManifest,
 }
 
 

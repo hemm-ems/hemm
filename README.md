@@ -48,6 +48,8 @@ uv pip install -e ../hemm
 ## Architecture
 
 - **Declarative manifests** — devices describe themselves via a versioned JSON schema (constraints, cost functions, efficiency maps, actuator contracts with expected-outcome verification). The solver has no device-specific code.
+- **Control classes** — each manifest declares `control_class` (planned / reactive / passive). Planned devices get full 15-min scheduling; reactive devices follow second-by-second setpoints; passive devices are monitored but never actuated.
+- **Reason annotation** — every plan slot carries a `reason` field (`pv_surplus`, `cheap_grid`, `constraint`, `idle`, `manual`, `safety_default`) explaining why the solver chose that power level.
 - **Two solver backends** — Central MILP (Pyomo + HiGHS, default) and distributed optimization (experimental, price iteration / ADMM). Both read identical manifests.
 - **Forecast adapters** — pluggable sources for PV and price forecasts (Solcast, Forecast.Solar, template fallback).
 - **Simulation harness** — run scenarios against historical data, compare solver backends, generate Markdown reports.

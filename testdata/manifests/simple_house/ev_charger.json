@@ -2,6 +2,7 @@
   "type": "ev_charger",
   "device_id": "ev_charger_garage",
   "name": "Garage EV Charger",
+  "control_class": "reactive",
   "max_charge_kw": 11.0,
   "min_charge_kw": 1.4,
   "phases": 3,

@@ -1,0 +1,13 @@
+{
+  "type": "passive_load",
+  "device_id": "base_load",
+  "name": "Kitchen & Lighting",
+  "typical_daily_kwh": 8.0,
+  "load_profile_entity": "sensor.house_base_load",
+  "constraint_endpoints": {},
+  "actions": {},
+  "safe_default": {
+    "script": "script.passive_noop",
+    "description": "Passive load — no control action"
+  }
+}

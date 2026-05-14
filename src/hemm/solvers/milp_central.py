@@ -21,12 +21,13 @@ from hemm.manifest.constraints import (
     MinSocUntil,
     ReachMinTempOnce,
 )
-from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanSlot
+from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
 from hemm.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
+    PassiveLoadManifest,
     ThermostatLoadManifest,
     WaterHeaterManifest,
 )
@@ -228,7 +229,10 @@ class MILPCentralSolver:
             )
 
         # Extract plans
-        plans = self._extract_plans(model, device_ids, n_slots, t0, resolution_minutes, horizon_minutes)
+        plans = self._extract_plans(
+            model, device_ids, n_slots, t0, resolution_minutes, horizon_minutes,
+            constraint_windows=constraint_windows, prices=prices,
+        )
 
         solve_time = time.monotonic() - start_time
         obj_val = pyo.value(model.objective) if model.objective.expr is not None else None
@@ -269,6 +273,11 @@ class MILPCentralSolver:
             return (0.0, manifest.max_power_kw)
         if isinstance(manifest, WaterHeaterManifest):
             return (0.0, manifest.max_power_kw)
+        if isinstance(manifest, PassiveLoadManifest):
+            # Fixed load — power is determined by typical daily consumption,
+            # distributed evenly.  Bounds are fixed to that value.
+            avg_kw = manifest.typical_daily_kwh / 24.0
+            return (avg_kw, avg_kw)
         # PV forecast, Room — no direct power decision
         return (0.0, 0.0)
 
@@ -370,10 +379,30 @@ class MILPCentralSolver:
         t0: datetime,
         resolution_minutes: int,
         horizon_minutes: int,
+        *,
+        constraint_windows: list[ConstraintWindow] | None = None,
+        prices: list[float] | None = None,
     ) -> list[PlanMessage]:
-        """Extract plan messages from the solved model."""
+        """Extract plan messages from the solved model with reason annotation."""
         plans: list[PlanMessage] = []
         now = datetime.now(tz=UTC)
+
+        # Pre-compute constrained (device, slot) pairs
+        constrained_slots: set[tuple[str, int]] = set()
+        if constraint_windows:
+            for cw in constraint_windows:
+                if cw.device_id not in device_ids:
+                    continue
+                deadline_slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
+                for t in range(min(deadline_slot + 1, n_slots)):
+                    constrained_slots.add((cw.device_id, t))
+
+        # Pre-compute cheap price threshold (bottom 25%)
+        cheap_threshold: float | None = None
+        if prices:
+            sorted_prices = sorted(prices)
+            q25_idx = max(0, len(sorted_prices) // 4 - 1)
+            cheap_threshold = sorted_prices[q25_idx]
 
         for did in device_ids:
             slots: list[PlanSlot] = []
@@ -383,7 +412,11 @@ class MILPCentralSolver:
                 power = pyo.value(model.power[did, t])
                 on = pyo.value(model.on[did, t])
                 mode = "active" if on > 0.5 else "idle"
-                slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode))
+
+                reason = self._determine_reason(
+                    did, t, power, on, constrained_slots, prices, cheap_threshold,
+                )
+                slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 
             plans.append(
                 PlanMessage(
@@ -396,6 +429,37 @@ class MILPCentralSolver:
             )
 
         return plans
+
+    @staticmethod
+    def _determine_reason(
+        device_id: str,
+        slot_idx: int,
+        power: float,
+        on: float,
+        constrained_slots: set[tuple[str, int]],
+        prices: list[float] | None,
+        cheap_threshold: float | None,
+    ) -> PlanReason:
+        """Determine why the solver chose this setpoint for a slot."""
+        # Device is effectively off → idle
+        if abs(power) < 0.01:
+            return PlanReason.IDLE
+
+        # Constraint forced this slot
+        if (device_id, slot_idx) in constrained_slots:
+            return PlanReason.CONSTRAINT
+
+        # Producing power (negative) → likely PV surplus driving battery discharge or similar
+        if power < -0.01:
+            return PlanReason.PV_SURPLUS
+
+        # Consuming in a cheap price slot
+        if prices and cheap_threshold is not None and slot_idx < len(prices):
+            if prices[slot_idx] <= cheap_threshold:
+                return PlanReason.CHEAP_GRID
+
+        # Active but no specific reason identified → cheap_grid (solver chose for cost)
+        return PlanReason.CHEAP_GRID
 
     def cop_at_temp(self, manifest: HeatPumpManifest, outdoor_temp: float | None = None) -> float:
         """Get COP for a heat pump at the given outdoor temperature."""
