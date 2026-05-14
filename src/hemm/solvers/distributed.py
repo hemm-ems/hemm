@@ -325,9 +325,8 @@ class DistributedSolver:
         if power < -0.01:
             return PlanReason.PV_SURPLUS
 
-        if prices and cheap_threshold is not None and slot_idx < len(prices):
-            if prices[slot_idx] <= cheap_threshold:
-                return PlanReason.CHEAP_GRID
+        if prices and cheap_threshold is not None and slot_idx < len(prices) and prices[slot_idx] <= cheap_threshold:
+            return PlanReason.CHEAP_GRID
 
         return PlanReason.CHEAP_GRID
 

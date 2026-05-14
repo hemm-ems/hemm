@@ -369,6 +369,7 @@ class TestPVSourceKind:
     @pytest.mark.unit
     def test_invalid_source_kind(self) -> None:
         from pydantic import ValidationError as PydanticValidationError
+
         from hemm.manifest.types import PVForecastManifest
         with pytest.raises(PydanticValidationError):
             PVForecastManifest(

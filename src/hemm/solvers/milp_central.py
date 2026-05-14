@@ -457,9 +457,8 @@ class MILPCentralSolver:
             return PlanReason.PV_SURPLUS
 
         # Consuming in a cheap price slot
-        if prices and cheap_threshold is not None and slot_idx < len(prices):
-            if prices[slot_idx] <= cheap_threshold:
-                return PlanReason.CHEAP_GRID
+        if prices and cheap_threshold is not None and slot_idx < len(prices) and prices[slot_idx] <= cheap_threshold:
+            return PlanReason.CHEAP_GRID
 
         # Active but no specific reason identified → cheap_grid (solver chose for cost)
         return PlanReason.CHEAP_GRID
