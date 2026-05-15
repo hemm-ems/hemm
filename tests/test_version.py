@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from hemm.manifest.version import VersionSpecifier, check_version
+from hemm_core.manifest.version import VersionSpecifier, check_version
 
 
 class TestVersionSpecifierParsing:

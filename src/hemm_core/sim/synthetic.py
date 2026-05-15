@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from hemm.time import Clock, WallClock
+from hemm_core.time import Clock, WallClock
 
 
 def generate_price_series(

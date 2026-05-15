@@ -11,7 +11,7 @@ from typing import Any
 
 import pyomo.environ as pyo  # type: ignore[import-untyped]
 
-from hemm.manifest.constraints import (
+from hemm_core.manifest.constraints import (
     ForbiddenWindow,
     HoldTempBand,
     MaxRuntimePerDay,
@@ -20,18 +20,19 @@ from hemm.manifest.constraints import (
     MinSocUntil,
     ReachMinTempOnce,
 )
-from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
-from hemm.manifest.types import (
+from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
+from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
     PassiveLoadManifest,
+    RoomManifest,
     ThermostatLoadManifest,
     WaterHeaterManifest,
 )
-from hemm.solvers.protocol import SolverResult, SolverStatus
-from hemm.time import Clock, WallClock
+from hemm_core.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.time import Clock, WallClock
 
 # Default plan-change penalty weight (€/kW² per slot deviation from previous plan)
 PLAN_CHANGE_PENALTY_WEIGHT = 0.01
@@ -46,6 +47,18 @@ DEFAULT_COP_MAP: list[tuple[float, float]] = [
     (10.0, 4.5),
     (15.0, 5.0),
 ]
+
+# Insulation class → default U-value in W/(m²·K)
+_INSULATION_U_VALUE: dict[str, float] = {"good": 0.25, "medium": 0.5, "poor": 1.0}
+
+# Default thermal mass when not specified (kWh/K) — light construction single room
+_DEFAULT_THERMAL_MASS_KWH_PER_K = 2.0
+
+# Default indoor temperature for initial condition (°C)
+_DEFAULT_INDOOR_TEMP_C = 20.0
+
+# Big-M for ReachMinTempOnce linearisation (°C headroom)
+_BIG_M_TEMP = 50.0
 
 
 def _piecewise_cop(cop_map: list[tuple[float, float]], outdoor_temp: float) -> float:
@@ -113,6 +126,7 @@ class MILPCentralSolver:
         horizon_minutes: int = 1440,
         resolution_minutes: int = 15,
         previous_plans: list[PlanMessage] | None = None,
+        weather_forecast: list[tuple[datetime, float]] | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
         start_time = self._clock.monotonic()
@@ -182,9 +196,81 @@ class MILPCentralSolver:
                     model.soc_constraints.add(model.soc[did, t + 1] >= cap * bat.min_soc_pct / 100.0)
                     model.soc_constraints.add(model.soc[did, t + 1] <= cap * bat.max_soc_pct / 100.0)
 
-        # Apply constraint windows
+        # ── Thermal model (RC per room) ──────────────────────────────
+        outdoor_temps = self._align_weather(weather_forecast, n_slots)
+        room_devs = {did: m for did, m in device_map.items() if isinstance(m, RoomManifest)}
+
+        if room_devs:
+            # Build room → heater mapping via room_id
+            room_heaters: dict[str, list[str]] = {rid: [] for rid in room_devs}
+            for did, m in device_map.items():
+                rid = getattr(m, "room_id", None)
+                if rid and rid in room_heaters:
+                    room_heaters[rid].append(did)
+
+            room_ids = list(room_devs.keys())
+            # Temperature state variable: T[room, t] for t in 0..n_slots
+            model.temp = pyo.Var(
+                [(r, t) for r in room_ids for t in range(n_slots + 1)],
+                domain=pyo.Reals,
+            )
+            model.thermal_constraints = pyo.ConstraintList()
+
+            dt_hours = resolution_minutes / 60.0
+
+            for rid in room_ids:
+                room = room_devs[rid]
+                assert isinstance(room, RoomManifest)
+
+                # Derive thermal parameters
+                c_kwh_per_k = room.thermal_mass_kwh_per_k or _DEFAULT_THERMAL_MASS_KWH_PER_K
+                envelope_area = room.floor_area_m2 + (room.window_area_m2 or 0.0)
+                u_val = room.u_value_w_per_m2k
+                if u_val is None:
+                    u_val = _INSULATION_U_VALUE.get(room.insulation_class or "medium", 0.5)
+                ua_kw = u_val * envelope_area / 1000.0  # W→kW
+
+                # Initial temperature
+                model.thermal_constraints.add(model.temp[rid, 0] == _DEFAULT_INDOOR_TEMP_C)
+
+                heater_ids = room_heaters[rid]
+
+                for t in range(n_slots):
+                    t_out = outdoor_temps[t]
+
+                    # Q_in = sum of heat from heaters.  For heat pumps multiply
+                    # electrical power by COP at the slot's outdoor temperature.
+                    q_in: Any = 0.0
+                    for hid in heater_ids:
+                        hm = device_map[hid]
+                        if isinstance(hm, HeatPumpManifest):
+                            cop = self.cop_at_temp(hm, t_out)
+                            q_in += model.power[hid, t] * cop
+                        else:
+                            # Thermostat loads, water heaters: electrical power ≈ heat
+                            q_in += model.power[hid, t]
+
+                    # RC dynamics: T[t+1] = T[t] + dt*(Q_in - UA*(T[t] - T_out)) / C
+                    model.thermal_constraints.add(
+                        model.temp[rid, t + 1]
+                        == model.temp[rid, t] + dt_hours * (q_in - ua_kw * (model.temp[rid, t] - t_out)) / c_kwh_per_k
+                    )
+
+        # Apply constraint windows (including thermal constraints)
         model.constraint_windows = pyo.ConstraintList()
-        self._apply_constraint_windows(model, constraint_windows, device_map, t0, n_slots, resolution_minutes)
+        model.thermal_slack_lo = pyo.VarList(domain=pyo.NonNegativeReals)
+        model.thermal_slack_hi = pyo.VarList(domain=pyo.NonNegativeReals)
+        model.thermal_reached = pyo.VarList(domain=pyo.Binary)
+        thermal_penalty_terms: list[Any] = []
+        self._apply_constraint_windows(
+            model,
+            constraint_windows,
+            device_map,
+            t0,
+            n_slots,
+            resolution_minutes,
+            thermal_penalty_terms=thermal_penalty_terms,
+        )
 
         # Objective: minimize energy cost + plan-change penalty
         prev_plan_map = self._build_prev_plan_map(previous_plans, device_ids, n_slots)
@@ -205,7 +291,11 @@ class MILPCentralSolver:
             change_penalty: Any = 0.0
             if prev_plan_map and self._plan_change_penalty > 0:
                 change_penalty = sum(self._plan_change_penalty * m.delta[d, t] for d in m.D for t in m.T)
-            return energy_cost + change_penalty
+            # Thermal comfort violation penalty
+            comfort_penalty: Any = 0.0
+            if thermal_penalty_terms:
+                comfort_penalty = sum(thermal_penalty_terms)
+            return energy_cost + change_penalty + comfort_penalty
 
         model.objective = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
 
@@ -233,8 +323,14 @@ class MILPCentralSolver:
 
         # Extract plans
         plans = self._extract_plans(
-            model, device_ids, n_slots, t0, resolution_minutes, horizon_minutes,
-            constraint_windows=constraint_windows, prices=prices,
+            model,
+            device_ids,
+            n_slots,
+            t0,
+            resolution_minutes,
+            horizon_minutes,
+            constraint_windows=constraint_windows,
+            prices=prices,
         )
 
         solve_time = self._clock.monotonic() - start_time
@@ -264,6 +360,18 @@ class MILPCentralSolver:
                 prices.append(price_forecast[-1][1])
         return prices
 
+    def _align_weather(self, weather_forecast: list[tuple[datetime, float]] | None, n_slots: int) -> list[float]:
+        """Align weather forecast to solver slots, falling back to constructor default."""
+        if not weather_forecast:
+            return [self._outdoor_temp_c] * n_slots
+        temps: list[float] = []
+        for i in range(n_slots):
+            if i < len(weather_forecast):
+                temps.append(weather_forecast[i][1])
+            else:
+                temps.append(weather_forecast[-1][1])
+        return temps
+
     def _get_power_bounds(self, manifest: Any) -> tuple[float, float]:
         """Get min/max power bounds for a device."""
         if isinstance(manifest, BatteryManifest):
@@ -292,8 +400,13 @@ class MILPCentralSolver:
         t0: datetime,
         n_slots: int,
         resolution_minutes: int,
+        *,
+        thermal_penalty_terms: list[Any] | None = None,
     ) -> None:
         """Apply constraint windows to the Pyomo model."""
+        if thermal_penalty_terms is None:
+            thermal_penalty_terms = []
+
         for cw in constraint_windows:
             if cw.device_id not in device_map:
                 continue
@@ -324,13 +437,35 @@ class MILPCentralSolver:
                 )
 
             elif isinstance(req, ReachMinTempOnce):
-                # At least one slot must have enough power to reach target temp
-                # Simplified: ensure some minimum energy is delivered
-                pass  # Complex thermal model deferred — just don't block
+                # Room must reach target_temp_c at least once before deadline.
+                # Binary reached[t]: 1 iff T[room, t] >= target.
+                # Linearised via big-M: T[t] - target >= -M*(1 - reached[t])
+                # At least one reached[t] == 1 up to deadline.
+                room_id = cw.device_id
+                if hasattr(model, "temp") and any((r, 0) in model.temp for r in [room_id]):
+                    target = req.target_temp_c
+                    reached_vars: list[Any] = []
+                    for t in range(min(deadline_slot + 1, n_slots) + 1):
+                        r_var = model.thermal_reached.add()
+                        reached_vars.append(r_var)
+                        # Big-M linearisation: T >= target - M*(1 - reached)
+                        model.constraint_windows.add(model.temp[room_id, t] - target >= -_BIG_M_TEMP * (1 - r_var))
+                    # At least one must be reached
+                    model.constraint_windows.add(sum(reached_vars) >= 1)
 
             elif isinstance(req, HoldTempBand):
-                # Simplified: device must run at reasonable level
-                pass  # Thermal model needed for proper implementation
+                # Soft comfort band: T[room, t] in [min_temp, max_temp]
+                # with slack variables penalised in the objective.
+                room_id = cw.device_id
+                if hasattr(model, "temp") and any((r, 0) in model.temp for r in [room_id]):
+                    for t in range(min(deadline_slot + 1, n_slots) + 1):
+                        s_lo = model.thermal_slack_lo.add()
+                        s_hi = model.thermal_slack_hi.add()
+                        # T[t] + s_lo >= min_temp
+                        model.constraint_windows.add(model.temp[room_id, t] + s_lo >= req.min_temp_c)
+                        # T[t] - s_hi <= max_temp
+                        model.constraint_windows.add(model.temp[room_id, t] - s_hi <= req.max_temp_c)
+                        thermal_penalty_terms.append(cw.priority_penalty * (s_lo + s_hi))
 
             elif isinstance(req, MinRuntimePerDay):
                 # Sum of on-variables must be >= min_hours / resolution
@@ -417,7 +552,13 @@ class MILPCentralSolver:
                 mode = "active" if on > 0.5 else "idle"
 
                 reason = self._determine_reason(
-                    did, t, power, on, constrained_slots, prices, cheap_threshold,
+                    did,
+                    t,
+                    power,
+                    on,
+                    constrained_slots,
+                    prices,
+                    cheap_threshold,
                 )
                 slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 

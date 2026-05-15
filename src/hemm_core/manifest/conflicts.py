@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hemm.manifest.messages import ConstraintWindow
+from hemm_core.manifest.messages import ConstraintWindow
 
 
 def resolve_conflicts(windows: list[ConstraintWindow]) -> list[ConstraintWindow]:

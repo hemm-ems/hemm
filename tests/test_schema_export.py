@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from hemm.cli import main
-from hemm.manifest.schema_export import (
+from hemm_core.cli import main
+from hemm_core.manifest.schema_export import (
     export_schemas_json,
     get_all_schemas,
     get_constraint_schema,
@@ -27,7 +27,16 @@ class TestSchemaExport:
 
     @pytest.mark.unit
     def test_get_manifest_schema_all_types(self) -> None:
-        for t in ["room", "thermostat_load", "heat_pump", "water_heater", "battery", "pv_forecast", "ev_charger", "passive_load"]:
+        for t in [
+            "room",
+            "thermostat_load",
+            "heat_pump",
+            "water_heater",
+            "battery",
+            "pv_forecast",
+            "ev_charger",
+            "passive_load",
+        ]:
             schema = get_manifest_schema(t)
             assert "properties" in schema
 

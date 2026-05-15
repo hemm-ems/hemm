@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from hemm.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
-from hemm.solvers.consumers import ConsumerModel, get_consumer_model
-from hemm.solvers.protocol import SolverResult, SolverStatus
-from hemm.time import Clock, WallClock
+from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
+from hemm_core.solvers.consumers import ConsumerModel, get_consumer_model
+from hemm_core.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.time import Clock, WallClock
 
 # Convergence tolerance for total power imbalance (kW)
 DEFAULT_CONVERGENCE_TOL = 0.1
@@ -86,6 +86,7 @@ class DistributedSolver:
         horizon_minutes: int = 1440,
         resolution_minutes: int = 15,
         previous_plans: list[PlanMessage] | None = None,
+        weather_forecast: list[tuple[datetime, float]] | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
         start_time = self._clock.monotonic()
@@ -209,8 +210,14 @@ class DistributedSolver:
 
         # Build plans from final device powers
         plans = self._build_plans(
-            device_powers, consumers, t0, n_slots, resolution_minutes, horizon_minutes,
-            constraint_windows=constraint_windows, prices=prices,
+            device_powers,
+            consumers,
+            t0,
+            n_slots,
+            resolution_minutes,
+            horizon_minutes,
+            constraint_windows=constraint_windows,
+            prices=prices,
         )
 
         solve_time = self._clock.monotonic() - start_time
@@ -290,7 +297,12 @@ class DistributedSolver:
                 power = powers[t]
                 mode = "active" if abs(power) > 0.01 else "idle"
                 reason = self._determine_reason(
-                    did, t, power, constrained_slots, prices, cheap_threshold,
+                    did,
+                    t,
+                    power,
+                    constrained_slots,
+                    prices,
+                    cheap_threshold,
                 )
                 slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 

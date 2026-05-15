@@ -23,10 +23,10 @@ ci: lint typecheck check-clock test
 ## in domain code. Whitelist: hemm/time/, CLI entry points.
 check-clock:
 	uv run python tools/check_clock.py \
-		--root src/hemm \
-		--allow src/hemm/time \
-		--allow src/hemm/cli.py \
-		--allow src/hemm/__main__.py
+		--root src/hemm_core \
+		--allow src/hemm_core/time \
+		--allow src/hemm_core/cli.py \
+		--allow src/hemm_core/__main__.py
 
 ## CI full: ci + container tests
 ci-full: ci test-container

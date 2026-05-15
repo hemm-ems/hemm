@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 
-from hemm.manifest.messages import ConstraintWindow
-from hemm.time import Clock, WallClock
+from hemm_core.manifest.messages import ConstraintWindow
+from hemm_core.time import Clock, WallClock
 
 
 class ConstraintWindowManager:

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from hemm.adapters.protocol import ForecastPoint
-from hemm.time import Clock, WallClock
+from hemm_core.adapters.protocol import ForecastPoint
+from hemm_core.time import Clock, WallClock
 
 
 class ForecastSolarAdapter:

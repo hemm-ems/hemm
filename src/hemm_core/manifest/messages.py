@@ -7,7 +7,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from hemm.manifest.constraints import ConstraintRequirement
+from hemm_core.manifest.constraints import ConstraintRequirement
 
 
 class PlanReason(StrEnum):

@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from hemm.sim.runner import SimRunner
-from hemm.sim.scenario import load_scenario
-from hemm.solvers.protocol import SolverStatus
+from hemm_core.sim.runner import SimRunner
+from hemm_core.sim.scenario import load_scenario
+from hemm_core.solvers.protocol import SolverStatus
 
 SCENARIOS_DIR = Path(__file__).parent.parent / "testdata" / "scenarios"
 

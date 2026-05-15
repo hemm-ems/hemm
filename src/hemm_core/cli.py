@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_schema(args: argparse.Namespace) -> int:
     """Export JSON schemas."""
-    from hemm.manifest.schema_export import (
+    from hemm_core.manifest.schema_export import (
         export_schemas_json,
         get_constraint_schema,
         get_manifest_schema,
@@ -107,7 +107,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     """Validate manifest files."""
     import pathlib
 
-    from hemm.manifest.validator import ValidationError, validate_manifest
+    from hemm_core.manifest.validator import ValidationError, validate_manifest
 
     all_ok = True
     for filepath in args.files:
@@ -145,8 +145,8 @@ def _cmd_sim(args: argparse.Namespace) -> int:
         print("Usage: hemm sim run <scenario.yaml> | hemm sim compare <scenarios...>", file=sys.stderr)
         return 1
 
-    from hemm.sim.runner import SimRunner
-    from hemm.sim.scenario import load_scenario
+    from hemm_core.sim.runner import SimRunner
+    from hemm_core.sim.scenario import load_scenario
 
     scenario_path: str = args.scenario
     verbose: bool = args.verbose
@@ -168,11 +168,11 @@ def _cmd_sim(args: argparse.Namespace) -> int:
     # Select solver
     solver: object
     if solver_name == "distributed":
-        from hemm.solvers.distributed import DistributedSolver
+        from hemm_core.solvers.distributed import DistributedSolver
 
         solver = DistributedSolver()
     else:
-        from hemm.solvers.milp_central import MILPCentralSolver
+        from hemm_core.solvers.milp_central import MILPCentralSolver
 
         solver = MILPCentralSolver()
 
@@ -198,8 +198,8 @@ def _cmd_sim_compare(args: argparse.Namespace) -> int:
     """Run A/B comparison across scenarios."""
     import pathlib
 
-    from hemm.sim.comparison import ABComparisonRunner
-    from hemm.sim.scenario import load_scenario
+    from hemm_core.sim.comparison import ABComparisonRunner
+    from hemm_core.sim.scenario import load_scenario
 
     verbose: bool = args.verbose
     output_path: str | None = args.output
@@ -234,7 +234,7 @@ def _cmd_sim_compare(args: argparse.Namespace) -> int:
 
 
 def _get_version() -> str:
-    from hemm import __version__
+    from hemm_core import __version__
 
     return __version__
 

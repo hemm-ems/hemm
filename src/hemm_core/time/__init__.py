@@ -15,6 +15,6 @@ Three implementations:
 
 from __future__ import annotations
 
-from hemm.time.clock import Clock, FixedClock, VirtualClock, WallClock
+from hemm_core.time.clock import Clock, FixedClock, VirtualClock, WallClock
 
 __all__ = ["Clock", "FixedClock", "VirtualClock", "WallClock"]

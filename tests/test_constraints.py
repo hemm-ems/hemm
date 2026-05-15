@@ -7,7 +7,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError as PydanticValidationError
 
-from hemm.manifest.constraints import (
+from hemm_core.manifest.constraints import (
     CONSTRAINT_VERSIONS,
     ConstraintType,
     ConstraintVocabulary,

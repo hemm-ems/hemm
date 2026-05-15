@@ -7,11 +7,11 @@ import io
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from hemm.sim.runner import SimRunner
-from hemm.sim.scenario import Scenario
-from hemm.solvers.distributed import DistributedSolver
-from hemm.solvers.milp_central import MILPCentralSolver
-from hemm.time import Clock, WallClock
+from hemm_core.sim.runner import SimRunner
+from hemm_core.sim.scenario import Scenario
+from hemm_core.solvers.distributed import DistributedSolver
+from hemm_core.solvers.milp_central import MILPCentralSolver
+from hemm_core.time import Clock, WallClock
 
 
 @dataclass

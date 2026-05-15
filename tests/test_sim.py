@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from hemm.sim.runner import SimRunner
-from hemm.sim.scenario import Scenario, load_scenario
-from hemm.sim.synthetic import generate_price_series, generate_weather_series
+from hemm_core.sim.runner import SimRunner
+from hemm_core.sim.scenario import Scenario, load_scenario
+from hemm_core.sim.synthetic import generate_price_series, generate_weather_series
 
 TESTDATA_DIR = Path(__file__).parent.parent / "testdata"
 SCENARIOS_DIR = TESTDATA_DIR / "scenarios"

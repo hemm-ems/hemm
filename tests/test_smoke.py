@@ -13,12 +13,12 @@ class TestImport:
     """Verify the package is importable."""
 
     def test_import_hemm(self) -> None:
-        import hemm
+        import hemm_core
 
-        assert hemm.__version__ == "0.1.0"
+        assert hemm_core.__version__ == "0.1.0"
 
     def test_import_cli(self) -> None:
-        from hemm.cli import main
+        from hemm_core.cli import main
 
         assert callable(main)
 
@@ -29,7 +29,7 @@ class TestCLI:
 
     def test_help(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "hemm.cli", "--help"],
+            [sys.executable, "-m", "hemm_core.cli", "--help"],
             capture_output=True,
             text=True,
         )
@@ -38,7 +38,7 @@ class TestCLI:
 
     def test_version(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "hemm.cli", "--version"],
+            [sys.executable, "-m", "hemm_core.cli", "--version"],
             capture_output=True,
             text=True,
         )
@@ -46,11 +46,11 @@ class TestCLI:
         assert "0.1.0" in result.stdout
 
     def test_info_command(self) -> None:
-        from hemm.cli import main
+        from hemm_core.cli import main
 
         assert main(["info"]) == 0
 
     def test_no_command(self) -> None:
-        from hemm.cli import main
+        from hemm_core.cli import main
 
         assert main([]) == 0

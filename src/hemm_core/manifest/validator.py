@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from hemm.manifest.constraints import CONSTRAINT_VERSIONS, ConstraintType
-from hemm.manifest.types import (
+from hemm_core.manifest.constraints import CONSTRAINT_VERSIONS, ConstraintType
+from hemm_core.manifest.types import (
     BatteryManifest,
     DeviceManifest,
     EVChargerManifest,
@@ -19,7 +19,7 @@ from hemm.manifest.types import (
     ThermostatLoadManifest,
     WaterHeaterManifest,
 )
-from hemm.manifest.version import VersionSpecifier
+from hemm_core.manifest.version import VersionSpecifier
 
 
 class ValidationError(Exception):

@@ -8,9 +8,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from hemm.manifest.conflicts import find_conflicts, resolve_conflicts
-from hemm.manifest.constraints import MinSocUntil, ReachMinTempOnce
-from hemm.manifest.messages import (
+from hemm_core.manifest.conflicts import find_conflicts, resolve_conflicts
+from hemm_core.manifest.constraints import MinSocUntil, ReachMinTempOnce
+from hemm_core.manifest.messages import (
     ConstraintWindow,
     PlanMessage,
     PlanReason,

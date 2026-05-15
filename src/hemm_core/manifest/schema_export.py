@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from hemm.manifest.constraints import (
+from hemm_core.manifest.constraints import (
     ConstraintVocabulary,
     ForbiddenWindow,
     HoldTempBand,
@@ -15,8 +15,8 @@ from hemm.manifest.constraints import (
     MinSocUntil,
     ReachMinTempOnce,
 )
-from hemm.manifest.messages import ConstraintWindow, PlanMessage, PriceMessage
-from hemm.manifest.types import (
+from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PriceMessage
+from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,

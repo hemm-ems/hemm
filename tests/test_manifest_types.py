@@ -11,7 +11,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError as PydanticValidationError
 
-from hemm.manifest.types import (
+from hemm_core.manifest.types import (
     Action,
     BatteryManifest,
     ControlClass,
@@ -43,8 +43,14 @@ class TestManifestTypeEnum:
     @pytest.mark.unit
     def test_values(self) -> None:
         expected = {
-            "room", "thermostat_load", "heat_pump", "water_heater",
-            "battery", "pv_forecast", "ev_charger", "passive_load",
+            "room",
+            "thermostat_load",
+            "heat_pump",
+            "water_heater",
+            "battery",
+            "pv_forecast",
+            "ev_charger",
+            "passive_load",
         }
         assert {t.value for t in ManifestType} == expected
 
@@ -274,6 +280,7 @@ class TestPassiveLoadManifest:
     @pytest.mark.unit
     def test_invalid_zero_kwh(self) -> None:
         from pydantic import ValidationError as PydanticValidationError
+
         with pytest.raises(PydanticValidationError):
             PassiveLoadManifest(
                 device_id="b",
@@ -307,8 +314,11 @@ class TestHeatPumpSourceSink:
     @pytest.mark.unit
     def test_ground_source(self) -> None:
         m = HeatPumpManifest(
-            device_id="hp1", name="HP", max_power_kw=8.0,
-            source_type="ground", sink_type="water",
+            device_id="hp1",
+            name="HP",
+            max_power_kw=8.0,
+            source_type="ground",
+            sink_type="water",
             safe_default=_make_safe_default(),
         )
         assert m.source_type == "ground"
@@ -316,8 +326,11 @@ class TestHeatPumpSourceSink:
     @pytest.mark.unit
     def test_air_to_air(self) -> None:
         m = HeatPumpManifest(
-            device_id="hp1", name="HP", max_power_kw=3.0,
-            source_type="air", sink_type="air",
+            device_id="hp1",
+            name="HP",
+            max_power_kw=3.0,
+            source_type="air",
+            sink_type="air",
             safe_default=_make_safe_default(),
         )
         assert m.sink_type == "air"
@@ -325,9 +338,12 @@ class TestHeatPumpSourceSink:
     @pytest.mark.unit
     def test_invalid_source_type(self) -> None:
         from pydantic import ValidationError as PydanticValidationError
+
         with pytest.raises(PydanticValidationError):
             HeatPumpManifest(
-                device_id="hp1", name="HP", max_power_kw=5.0,
+                device_id="hp1",
+                name="HP",
+                max_power_kw=5.0,
                 source_type="fire",
                 safe_default=_make_safe_default(),
             )
@@ -338,19 +354,27 @@ class TestPVSourceKind:
 
     @pytest.mark.unit
     def test_default_is_pv(self) -> None:
-        from hemm.manifest.types import PVForecastManifest
+        from hemm_core.manifest.types import PVForecastManifest
+
         m = PVForecastManifest(
-            device_id="pv1", name="PV", peak_power_kwp=10.0,
+            device_id="pv1",
+            name="PV",
+            peak_power_kwp=10.0,
             safe_default=_make_safe_default(),
         )
         assert m.source_kind == "pv"
 
     @pytest.mark.unit
     def test_wind(self) -> None:
-        from hemm.manifest.types import PVForecastManifest
+        from hemm_core.manifest.types import PVForecastManifest
+
         m = PVForecastManifest(
-            device_id="wind1", name="Wind", peak_power_kwp=5.0,
-            source_kind="wind", azimuth_deg=None, tilt_deg=None,
+            device_id="wind1",
+            name="Wind",
+            peak_power_kwp=5.0,
+            source_kind="wind",
+            azimuth_deg=None,
+            tilt_deg=None,
             safe_default=_make_safe_default(),
         )
         assert m.source_kind == "wind"
@@ -358,10 +382,15 @@ class TestPVSourceKind:
 
     @pytest.mark.unit
     def test_chp(self) -> None:
-        from hemm.manifest.types import PVForecastManifest
+        from hemm_core.manifest.types import PVForecastManifest
+
         m = PVForecastManifest(
-            device_id="chp1", name="CHP", peak_power_kwp=2.0,
-            source_kind="chp", azimuth_deg=None, tilt_deg=None,
+            device_id="chp1",
+            name="CHP",
+            peak_power_kwp=2.0,
+            source_kind="chp",
+            azimuth_deg=None,
+            tilt_deg=None,
             safe_default=_make_safe_default(),
         )
         assert m.source_kind == "chp"
@@ -370,10 +399,13 @@ class TestPVSourceKind:
     def test_invalid_source_kind(self) -> None:
         from pydantic import ValidationError as PydanticValidationError
 
-        from hemm.manifest.types import PVForecastManifest
+        from hemm_core.manifest.types import PVForecastManifest
+
         with pytest.raises(PydanticValidationError):
             PVForecastManifest(
-                device_id="x", name="X", peak_power_kwp=1.0,
+                device_id="x",
+                name="X",
+                peak_power_kwp=1.0,
                 source_kind="nuclear",
                 safe_default=_make_safe_default(),
             )
@@ -486,7 +518,7 @@ class TestControlClass:
     @pytest.mark.unit
     def test_control_class_in_all_device_types(self) -> None:
         """Every device type accepts control_class field."""
-        from hemm.manifest.types import (
+        from hemm_core.manifest.types import (
             PVForecastManifest,
             ThermostatLoadManifest,
             WaterHeaterManifest,
@@ -500,7 +532,11 @@ class TestControlClass:
                 device_id="w", name="W", volume_liters=200, max_power_kw=3.0, safe_default=_make_safe_default()
             ),
             BatteryManifest(
-                device_id="b", name="B", capacity_kwh=10, max_charge_kw=5, max_discharge_kw=5,
+                device_id="b",
+                name="B",
+                capacity_kwh=10,
+                max_charge_kw=5,
+                max_discharge_kw=5,
                 safe_default=_make_safe_default(),
             ),
             PVForecastManifest(device_id="p", name="P", peak_power_kwp=10.0, safe_default=_make_safe_default()),
@@ -569,7 +605,7 @@ class TestTestdataManifests:
     )
     def test_simple_house_manifest_valid(self, filename: str) -> None:
         """Every manifest in testdata/manifests/simple_house/ must validate."""
-        from hemm.manifest.validator import validate_manifest
+        from hemm_core.manifest.validator import validate_manifest
 
         filepath = TESTDATA_DIR / filename
         assert filepath.exists(), f"Missing testdata file: {filepath}"

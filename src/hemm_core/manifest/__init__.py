@@ -1,6 +1,6 @@
 """HEMM manifest schema — declarative device self-description."""
 
-from hemm.manifest.constraints import (
+from hemm_core.manifest.constraints import (
     ConstraintType,
     ConstraintVersion,
     ConstraintVocabulary,
@@ -12,7 +12,7 @@ from hemm.manifest.constraints import (
     MinSocUntil,
     ReachMinTempOnce,
 )
-from hemm.manifest.messages import (
+from hemm_core.manifest.messages import (
     ConstraintWindow,
     PlanMessage,
     PlanReason,
@@ -20,7 +20,7 @@ from hemm.manifest.messages import (
     PriceMessage,
     PriceSlot,
 )
-from hemm.manifest.types import (
+from hemm_core.manifest.types import (
     Action,
     BatteryManifest,
     ControlClass,
@@ -39,8 +39,8 @@ from hemm.manifest.types import (
     VerificationContract,
     WaterHeaterManifest,
 )
-from hemm.manifest.validator import ValidationError, validate_manifest
-from hemm.manifest.version import VersionSpecifier, check_version
+from hemm_core.manifest.validator import ValidationError, validate_manifest
+from hemm_core.manifest.version import VersionSpecifier, check_version
 
 __all__ = [
     "Action",

@@ -12,15 +12,15 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any
 
-from hemm.manifest.constraints import (
+from hemm_core.manifest.constraints import (
     ForbiddenWindow,
     MaxRuntimePerDay,
     MinEnergyUntil,
     MinRuntimePerDay,
     MinSocUntil,
 )
-from hemm.manifest.messages import ConstraintWindow
-from hemm.manifest.types import (
+from hemm_core.manifest.messages import ConstraintWindow
+from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,

@@ -6,11 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hemm.constraints import ConstraintWindowManager
-from hemm.manifest.constraints import MinSocUntil
-from hemm.manifest.messages import ConstraintWindow
-from hemm.sim.synthetic import generate_price_series
-from hemm.time import Clock, FixedClock, VirtualClock, WallClock
+from hemm_core.constraints import ConstraintWindowManager
+from hemm_core.manifest.constraints import MinSocUntil
+from hemm_core.manifest.messages import ConstraintWindow
+from hemm_core.sim.synthetic import generate_price_series
+from hemm_core.time import Clock, FixedClock, VirtualClock, WallClock
 
 
 class TestClockImpls:

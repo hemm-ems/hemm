@@ -6,11 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hemm.manifest.constraints import MinSocUntil
-from hemm.manifest.messages import ConstraintWindow
-from hemm.manifest.types import BatteryManifest, EVChargerManifest, HeatPumpManifest, ThermostatLoadManifest
-from hemm.solvers.distributed import DistributedSolver
-from hemm.solvers.protocol import SolverStatus
+from hemm_core.manifest.constraints import MinSocUntil
+from hemm_core.manifest.messages import ConstraintWindow
+from hemm_core.manifest.types import BatteryManifest, EVChargerManifest, HeatPumpManifest, ThermostatLoadManifest
+from hemm_core.solvers.distributed import DistributedSolver
+from hemm_core.solvers.protocol import SolverStatus
 
 T0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
 

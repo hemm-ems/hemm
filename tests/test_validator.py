@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hemm.manifest.validator import ValidationError, validate_manifest
+from hemm_core.manifest.validator import ValidationError, validate_manifest
 
 
 class TestValidatorBasics:

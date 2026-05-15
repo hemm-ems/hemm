@@ -6,9 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hemm.constraints import ConstraintWindowManager
-from hemm.manifest.constraints import MinSocUntil
-from hemm.manifest.messages import ConstraintWindow
+from hemm_core.constraints import ConstraintWindowManager
+from hemm_core.manifest.constraints import MinSocUntil
+from hemm_core.manifest.messages import ConstraintWindow
 
 
 def _make_window(

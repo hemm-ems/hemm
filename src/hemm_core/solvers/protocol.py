@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from hemm.manifest.messages import ConstraintWindow, PlanMessage
+from hemm_core.manifest.messages import ConstraintWindow, PlanMessage
 
 
 class SolverStatus(StrEnum):
@@ -51,6 +51,7 @@ class SolverProtocol(Protocol):
         horizon_minutes: int,
         resolution_minutes: int,
         previous_plans: list[PlanMessage] | None = None,
+        weather_forecast: list[tuple[datetime, float]] | None = None,
     ) -> SolverResult:
         """Solve the optimization problem.
 
@@ -61,6 +62,7 @@ class SolverProtocol(Protocol):
             horizon_minutes: Planning horizon in minutes.
             resolution_minutes: Time resolution per slot.
             previous_plans: Previous plans for plan-change penalty.
+            weather_forecast: Outdoor temperature forecast as (timestamp, °C) pairs.
 
         Returns:
             SolverResult with plans for each device.

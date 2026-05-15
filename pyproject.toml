@@ -42,14 +42,14 @@ dev = [
 ]
 
 [project.scripts]
-hemm = "hemm.cli:main"
+hemm = "hemm_core.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/hemm-energy/hemm"
 Repository = "https://github.com/hemm-energy/hemm"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/hemm"]
+packages = ["src/hemm_core"]
 
 [tool.ruff]
 target-version = "py312"
@@ -74,13 +74,13 @@ select = [
 ignore = ["E501", "TC001", "TC003"]  # line length handled by formatter; TC rules conflict with Pydantic runtime needs
 
 [tool.ruff.lint.isort]
-known-first-party = ["hemm"]
+known-first-party = ["hemm_core"]
 
 [tool.mypy]
 strict = true
 python_version = "3.12"
 mypy_path = "src"
-packages = ["hemm"]
+packages = ["hemm_core"]
 warn_return_any = true
 warn_unused_configs = true
 
@@ -96,9 +96,9 @@ addopts = "-m 'not container and not pi and not slow' --strict-markers"
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["hemm"]
+source = ["hemm_core"]
 branch = true
-omit = ["*/hemm/__main__.py"]
+omit = ["*/hemm_core/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 80

@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from hemm.sim.comparison import ABComparisonRunner, ComparisonMetrics, ComparisonReport
-from hemm.sim.scenario import Scenario, load_scenario
-from hemm.solvers.distributed import DistributedSolver
-from hemm.solvers.milp_central import MILPCentralSolver
+from hemm_core.sim.comparison import ABComparisonRunner, ComparisonMetrics, ComparisonReport
+from hemm_core.sim.scenario import Scenario, load_scenario
+from hemm_core.solvers.distributed import DistributedSolver
+from hemm_core.solvers.milp_central import MILPCentralSolver
 
 TESTDATA = Path(__file__).parent.parent / "testdata"
 SCENARIOS_DIR = TESTDATA / "scenarios"

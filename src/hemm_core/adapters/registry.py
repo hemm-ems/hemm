@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from hemm.adapters.protocol import AdapterProtocol
-from hemm.time import Clock, WallClock
+from hemm_core.adapters.protocol import AdapterProtocol
+from hemm_core.time import Clock, WallClock
 
 
 class AdapterRegistry:
@@ -63,9 +63,9 @@ def reset_registry() -> None:
 
 def _register_builtin_adapters(registry: AdapterRegistry, *, clock: Clock) -> None:
     """Register built-in adapters."""
-    from hemm.adapters.forecast_solar import ForecastSolarAdapter
-    from hemm.adapters.solcast import SolcastAdapter
-    from hemm.adapters.template import TemplateAdapter
+    from hemm_core.adapters.forecast_solar import ForecastSolarAdapter
+    from hemm_core.adapters.solcast import SolcastAdapter
+    from hemm_core.adapters.template import TemplateAdapter
 
     registry.register(SolcastAdapter(clock=clock))
     registry.register(ForecastSolarAdapter(clock=clock))

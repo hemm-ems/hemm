@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hemm.adapters import AdapterRegistry, ForecastPoint, get_registry
-from hemm.adapters.forecast_solar import ForecastSolarAdapter
-from hemm.adapters.solcast import SolcastAdapter
-from hemm.adapters.template import TemplateAdapter
+from hemm_core.adapters import AdapterRegistry, ForecastPoint, get_registry
+from hemm_core.adapters.forecast_solar import ForecastSolarAdapter
+from hemm_core.adapters.solcast import SolcastAdapter
+from hemm_core.adapters.template import TemplateAdapter
 
 
 class TestForecastPoint:

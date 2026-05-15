@@ -6,11 +6,24 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hemm.manifest.constraints import ForbiddenWindow, MinEnergyUntil, MinRuntimePerDay, MinSocUntil
-from hemm.manifest.messages import ConstraintWindow, PlanReason
-from hemm.manifest.types import BatteryManifest, EVChargerManifest, HeatPumpManifest, ThermostatLoadManifest
-from hemm.solvers.milp_central import DEFAULT_COP_MAP, MILPCentralSolver, _piecewise_cop
-from hemm.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.manifest.constraints import (
+    ForbiddenWindow,
+    HoldTempBand,
+    MinEnergyUntil,
+    MinRuntimePerDay,
+    MinSocUntil,
+    ReachMinTempOnce,
+)
+from hemm_core.manifest.messages import ConstraintWindow, PlanReason
+from hemm_core.manifest.types import (
+    BatteryManifest,
+    EVChargerManifest,
+    HeatPumpManifest,
+    RoomManifest,
+    ThermostatLoadManifest,
+)
+from hemm_core.solvers.milp_central import DEFAULT_COP_MAP, MILPCentralSolver, _piecewise_cop
+from hemm_core.solvers.protocol import SolverResult, SolverStatus
 
 # --- Fixtures ---
 
@@ -461,8 +474,7 @@ class TestMILPReasonAnnotation:
         plan = result.plans[0]
         # At least some active slots before the deadline should be marked 'constraint'
         constrained_active = [
-            s for i, s in enumerate(plan.slots[:48])
-            if s.reason == PlanReason.CONSTRAINT and abs(s.power_kw) > 0.01
+            s for i, s in enumerate(plan.slots[:48]) if s.reason == PlanReason.CONSTRAINT and abs(s.power_kw) > 0.01
         ]
         assert len(constrained_active) > 0
 
@@ -490,9 +502,247 @@ class TestMILPReasonAnnotation:
         assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
         plan = result.plans[0]
         # Charging slots (positive power, in cheap time) should be cheap_grid
-        cheap_charging = [
-            s for i, s in enumerate(plan.slots)
-            if s.power_kw > 0.1 and s.reason == PlanReason.CHEAP_GRID
-        ]
+        cheap_charging = [s for i, s in enumerate(plan.slots) if s.power_kw > 0.1 and s.reason == PlanReason.CHEAP_GRID]
         # Battery should charge during cheap periods
         assert len(cheap_charging) > 0
+
+
+# --- Thermal model helpers ---
+
+
+def _make_room() -> RoomManifest:
+    return RoomManifest(
+        device_id="test_room",
+        name="Test Room",
+        floor_area_m2=25.0,
+        thermal_mass_kwh_per_k=2.0,
+        u_value_w_per_m2k=0.5,
+        window_area_m2=5.0,
+        safe_default={
+            "script": "script.room_safe",
+            "verify": {"entity": "sensor.room", "expected": "== off", "within_seconds": 30},
+        },
+    )
+
+
+def _make_heat_pump_for_room(room_id: str = "test_room") -> HeatPumpManifest:
+    return HeatPumpManifest(
+        device_id="test_hp_room",
+        name="Room Heat Pump",
+        max_power_kw=5.0,
+        cop_map=[(-10, 2.5), (0, 3.5), (10, 4.5)],
+        room_id=room_id,
+        safe_default={
+            "script": "script.hp_safe",
+            "verify": {"entity": "sensor.hp", "expected": "== idle", "within_seconds": 30},
+        },
+    )
+
+
+def _make_cold_weather(n_slots: int = 96) -> list[tuple[datetime, float]]:
+    """Outdoor temps cycling 0-5 °C (typical winter day)."""
+    import math
+
+    t0 = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+    return [(t0 + timedelta(minutes=15 * i), 2.5 + 2.5 * math.sin(2 * math.pi * i / 96)) for i in range(n_slots)]
+
+
+# --- Thermal model tests ---
+
+
+class TestThermalModel:
+    """Tests for the lumped-RC thermal model in the MILP solver."""
+
+    @pytest.mark.unit
+    def test_hold_temp_band_flat_price_cold_day(self) -> None:
+        """Heat pump runs enough to hold comfort band on a cold day with flat prices."""
+        solver = MILPCentralSolver()
+        room = _make_room()
+        hp = _make_heat_pump_for_room()
+        prices = _make_price_forecast(96, base=0.30)
+        weather = _make_cold_weather(96)
+
+        deadline = datetime(2026, 1, 16, 0, 0, tzinfo=UTC)
+        cw = ConstraintWindow(
+            window_id="comfort",
+            device_id="test_room",
+            deadline=deadline,
+            requirement=HoldTempBand(min_temp_c=20.0, max_temp_c=23.0),
+            priority_penalty=3.0,
+        )
+
+        result = solver.solve(
+            manifests=[room, hp],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            weather_forecast=weather,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.solve_time_seconds < 5.0
+
+        # Heat pump should run in some slots
+        hp_plan = next(p for p in result.plans if p.device_id == "test_hp_room")
+        active_slots = [s for s in hp_plan.slots if s.power_kw > 0.01]
+        assert len(active_slots) > 0, "Heat pump must run to maintain comfort"
+
+    @pytest.mark.unit
+    def test_hold_temp_band_preheats_before_price_peak(self) -> None:
+        """With double-price peak, solver shifts heating before the peak using thermal mass."""
+        solver = MILPCentralSolver()
+        room = _make_room()
+        hp = _make_heat_pump_for_room()
+        weather = _make_cold_weather(96)
+
+        t0 = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+        # Cheap at night (slots 0-31), expensive in day (32-63), cheap again (64-95)
+        prices = []
+        for i in range(96):
+            price = 0.15 if i < 32 or i >= 64 else 0.45
+            prices.append((t0 + timedelta(minutes=15 * i), price))
+
+        deadline = t0 + timedelta(hours=24)
+        cw = ConstraintWindow(
+            window_id="comfort",
+            device_id="test_room",
+            deadline=deadline,
+            requirement=HoldTempBand(min_temp_c=19.0, max_temp_c=24.0),
+            priority_penalty=5.0,
+        )
+
+        result = solver.solve(
+            manifests=[room, hp],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            weather_forecast=weather,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+
+        hp_plan = next(p for p in result.plans if p.device_id == "test_hp_room")
+        # Compare heating energy in cheap vs expensive periods
+        cheap_energy = sum(s.power_kw for s in hp_plan.slots[:32] if s.power_kw > 0)
+        peak_energy = sum(s.power_kw for s in hp_plan.slots[32:64] if s.power_kw > 0)
+        # Solver should shift heating to cheap period (pre-heat)
+        assert cheap_energy >= peak_energy, (
+            f"Expected more heating in cheap period ({cheap_energy:.1f}) than peak ({peak_energy:.1f})"
+        )
+
+    @pytest.mark.unit
+    def test_reach_min_temp_once_legionella(self) -> None:
+        """ReachMinTempOnce: hot water legionella case hits target before deadline."""
+        solver = MILPCentralSolver()
+        room = RoomManifest(
+            device_id="hw_tank",
+            name="Hot Water Tank Room",
+            floor_area_m2=2.0,
+            thermal_mass_kwh_per_k=0.15,  # Small tank ~50L
+            u_value_w_per_m2k=0.3,
+            safe_default={
+                "script": "script.tank_safe",
+                "verify": {"entity": "sensor.tank", "expected": "== off", "within_seconds": 30},
+            },
+        )
+        heater = ThermostatLoadManifest(
+            device_id="hw_heater",
+            name="Tank Heater",
+            max_power_kw=3.0,
+            room_id="hw_tank",
+            safe_default={
+                "script": "script.heater_safe",
+                "verify": {"entity": "sensor.heater", "expected": "== off", "within_seconds": 30},
+            },
+        )
+
+        t0 = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+        prices = [(t0 + timedelta(minutes=15 * i), 0.30) for i in range(48)]
+        weather = _make_cold_weather(48)
+
+        deadline = t0 + timedelta(hours=12)
+        cw = ConstraintWindow(
+            window_id="legionella",
+            device_id="hw_tank",
+            deadline=deadline,
+            requirement=ReachMinTempOnce(target_temp_c=60.0),
+            priority_penalty=10.0,
+        )
+
+        result = solver.solve(
+            manifests=[room, heater],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=720,
+            resolution_minutes=15,
+            weather_forecast=weather,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.solve_time_seconds < 5.0
+
+        # Heater should run heavily to reach 60°C
+        heater_plan = next(p for p in result.plans if p.device_id == "hw_heater")
+        total_energy = sum(s.power_kw for s in heater_plan.slots if s.power_kw > 0)
+        assert total_energy > 0, "Heater must run to reach legionella temperature"
+
+    @pytest.mark.unit
+    def test_room_id_links_heater_to_room(self) -> None:
+        """Heat pump with room_id=None doesn't contribute to any room's thermal model."""
+        solver = MILPCentralSolver()
+        room = _make_room()
+        hp_unlinked = HeatPumpManifest(
+            device_id="hp_unlinked",
+            name="Unlinked HP",
+            max_power_kw=5.0,
+            safe_default={
+                "script": "script.hp_safe",
+                "verify": {"entity": "sensor.hp", "expected": "== idle", "within_seconds": 30},
+            },
+        )
+        # room_id is None → unlinked
+        assert hp_unlinked.room_id is None
+
+        prices = _make_price_forecast(24, base=0.30)
+        weather = _make_cold_weather(24)
+
+        result = solver.solve(
+            manifests=[room, hp_unlinked],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=360,
+            resolution_minutes=15,
+            weather_forecast=weather,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+
+    @pytest.mark.unit
+    def test_no_weather_uses_default_outdoor_temp(self) -> None:
+        """Without weather_forecast, solver uses constructor default outdoor temp."""
+        solver = MILPCentralSolver(outdoor_temp_c=3.0)
+        room = _make_room()
+        hp = _make_heat_pump_for_room()
+        prices = _make_price_forecast(24, base=0.30)
+
+        t0 = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+        deadline = t0 + timedelta(hours=6)
+        cw = ConstraintWindow(
+            window_id="comfort",
+            device_id="test_room",
+            deadline=deadline,
+            requirement=HoldTempBand(min_temp_c=19.0, max_temp_c=23.0),
+            priority_penalty=3.0,
+        )
+
+        result = solver.solve(
+            manifests=[room, hp],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=360,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)

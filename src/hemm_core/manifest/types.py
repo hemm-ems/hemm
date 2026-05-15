@@ -166,6 +166,7 @@ class ThermostatLoadManifest(_ManifestBase):
     type: ManifestType = ManifestType.THERMOSTAT_LOAD
     max_power_kw: float = Field(gt=0, description="Maximum power draw in kW")
     hysteresis_k: float = Field(default=0.5, gt=0, description="Hysteresis band in K")
+    room_id: str | None = Field(default=None, description="device_id of the RoomManifest this heater serves")
 
 
 class HeatPumpManifest(_ManifestBase):
@@ -173,6 +174,7 @@ class HeatPumpManifest(_ManifestBase):
 
     type: ManifestType = ManifestType.HEAT_PUMP
     max_power_kw: float = Field(gt=0, description="Maximum electrical power in kW")
+    room_id: str | None = Field(default=None, description="device_id of the RoomManifest this heat pump serves")
     cop_map: list[tuple[float, float]] | None = Field(
         default=None, description="COP curve: list of (outdoor_temp_c, cop) tuples"
     )
@@ -192,6 +194,7 @@ class WaterHeaterManifest(_ManifestBase):
 
     type: ManifestType = ManifestType.WATER_HEATER
     volume_liters: float = Field(gt=0, description="Tank volume in liters")
+    room_id: str | None = Field(default=None, description="device_id of the RoomManifest this water heater serves")
     max_power_kw: float = Field(gt=0, description="Heating element power in kW")
     standby_loss_w: float = Field(default=50, ge=0, description="Standby heat loss in Watts")
     insulation_class: str | None = Field(default=None, description="'good', 'medium', 'poor'")

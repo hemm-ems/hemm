@@ -6,9 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from hemm.manifest.constraints import ForbiddenWindow, MinEnergyUntil, MinRuntimePerDay, MinSocUntil
-from hemm.manifest.messages import ConstraintWindow
-from hemm.manifest.types import (
+from hemm_core.manifest.constraints import ForbiddenWindow, MinEnergyUntil, MinRuntimePerDay, MinSocUntil
+from hemm_core.manifest.messages import ConstraintWindow
+from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
@@ -18,7 +18,7 @@ from hemm.manifest.types import (
     ThermostatLoadManifest,
     WaterHeaterManifest,
 )
-from hemm.solvers.consumers import (
+from hemm_core.solvers.consumers import (
     BatteryConsumer,
     EVChargerConsumer,
     HeatPumpConsumer,
