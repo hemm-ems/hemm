@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from hemm_core.constraints import ConstraintWindowManager
+from hemm_core.manifest.constraints import MinEnergyUntil
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage
+from hemm_core.manifest.types import RoomManifest, WaterHeaterManifest
 from hemm_core.manifest.validator import validate_manifest
+from hemm_core.sim.exogenous import ExogenousForecast, ExogenousSlot
+from hemm_core.sim.occupants import apply_interventions, load_household_profile, validate_profile
+from hemm_core.sim.occupants.interventions import ComfortOverride
+from hemm_core.sim.occupants.profile import HouseholdProfile
+from hemm_core.sim.occupants.validation import ResourceConflict
 from hemm_core.sim.scenario import Scenario
 from hemm_core.sim.synthetic import generate_price_series
 from hemm_core.solvers.milp_central import MILPCentralSolver
@@ -26,6 +34,12 @@ class SimMetrics:
     constraint_violations: int = 0
     solve_times: list[float] = field(default_factory=list)
     solver_statuses: list[str] = field(default_factory=list)
+    household_energy_kwh: float = 0.0
+    household_cost_eur: float = 0.0
+    dhw_draw_energy_kwh: float = 0.0
+    peak_total_power_kw: float = 0.0
+    comfort_degree_hours: float = 0.0
+    applied_interventions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -38,6 +52,7 @@ class SimResult:
     metrics: SimMetrics
     plans: list[PlanMessage] = field(default_factory=list)
     solver_results: list[SolverResult] = field(default_factory=list)
+    validation_conflicts: list[ResourceConflict] = field(default_factory=list)
     success: bool = True
     error: str | None = None
 
@@ -85,18 +100,60 @@ class SimRunner:
                 error=f"Manifest validation failed: {e}",
             )
 
+        t0 = self._scenario_start(scenario)
+        household_profile: HouseholdProfile | None = None
+        intervention_windows: list[ConstraintWindow] = []
+        comfort_overrides: list[ComfortOverride] = []
+        if scenario.household:
+            try:
+                profile_hours = scenario.horizon_hours + max(0, scenario.days - 1) * 24
+                household_profile = load_household_profile(
+                    scenario.household,
+                    base_dir=scenario.base_dir or self._cwd_base(),
+                    default_start=t0,
+                    horizon_hours=profile_hours,
+                    resolution_minutes=scenario.resolution_minutes,
+                )
+                intervention_result = apply_interventions(household_profile, scenario.interventions)
+                household_profile = intervention_result.profile
+                intervention_windows = intervention_result.constraint_windows
+                comfort_overrides = intervention_result.comfort_overrides
+                metrics.applied_interventions = intervention_result.applied_ids
+                conflicts = validate_profile(household_profile)
+                if conflicts:
+                    return SimResult(
+                        scenario_name=scenario.name,
+                        days_simulated=0,
+                        total_solve_time_seconds=0.0,
+                        metrics=metrics,
+                        validation_conflicts=conflicts,
+                        success=False,
+                        error=conflicts[0].message(),
+                    )
+            except Exception as e:
+                return SimResult(
+                    scenario_name=scenario.name,
+                    days_simulated=0,
+                    total_solve_time_seconds=0.0,
+                    metrics=metrics,
+                    success=False,
+                    error=f"Household profile failed: {e}",
+                )
+
         # Set up constraint windows
         self._constraint_mgr.clear()
         for cw_data in scenario.constraint_windows:
             cw = ConstraintWindow(**cw_data)
+            self._constraint_mgr.add(cw)
+        for cw in intervention_windows:
+            self._constraint_mgr.add(cw)
+        for cw in self._dhw_windows(household_profile, manifests, scenario):
             self._constraint_mgr.add(cw)
 
         # Run simulation day by day
         all_plans: list[PlanMessage] = []
         all_results: list[SolverResult] = []
         previous_plans: list[PlanMessage] | None = None
-
-        t0 = self._clock.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
         for day in range(scenario.days):
             day_start = t0 + timedelta(days=day)
@@ -111,6 +168,13 @@ class SimRunner:
 
             # Get active constraint windows
             active_windows = self._constraint_mgr.get_active(now=day_start)
+            exogenous = self._exogenous_forecast(
+                household_profile,
+                manifests,
+                start=day_start,
+                scenario=scenario,
+                comfort_overrides=comfort_overrides,
+            )
 
             # Solve
             result = self._solver.solve(
@@ -120,6 +184,7 @@ class SimRunner:
                 horizon_minutes=scenario.horizon_hours * 60,
                 resolution_minutes=scenario.resolution_minutes,
                 previous_plans=previous_plans,
+                exogenous_forecast=exogenous,
             )
 
             all_results.append(result)
@@ -140,6 +205,8 @@ class SimRunner:
                         dt_hours = scenario.resolution_minutes / 60.0
                         metrics.total_cost_eur += slot.power_kw * dt_hours * price
                         metrics.total_energy_kwh += abs(slot.power_kw) * dt_hours
+                if exogenous is not None:
+                    self._accumulate_exogenous_metrics(metrics, result.plans, exogenous, price_forecast, scenario)
             else:
                 metrics.constraint_violations += 1
 
@@ -174,3 +241,116 @@ class SimRunner:
             if "off_peak_price" in scenario.price_params:
                 params["off_peak_price"] = scenario.price_params["off_peak_price"]
         return params
+
+    def _scenario_start(self, scenario: Scenario) -> datetime:
+        raw = scenario.household.get("start") if scenario.household else None
+        if raw is None:
+            return self._clock.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        text = str(raw)
+        if len(text) == 10:
+            return datetime.fromisoformat(text).replace(tzinfo=UTC)
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
+
+    def _cwd_base(self) -> Path:
+        return Path.cwd()
+
+    def _dhw_windows(
+        self,
+        profile: HouseholdProfile | None,
+        manifests: list[Any],
+        scenario: Scenario,
+    ) -> list[ConstraintWindow]:
+        if profile is None:
+            return []
+        water_heater = next((m for m in manifests if isinstance(m, WaterHeaterManifest)), None)
+        if water_heater is None:
+            return []
+        total = sum(slot.dhw_energy_kwh(scenario.resolution_minutes) for slot in profile.slots)
+        if total <= 0.001:
+            return []
+        return [
+            ConstraintWindow(
+                window_id="occupants_dhw_draw",
+                device_id=water_heater.device_id,
+                deadline=profile.start + timedelta(hours=scenario.horizon_hours),
+                requirement=MinEnergyUntil(min_energy_kwh=total),
+                priority_penalty=4.0,
+                created_at=profile.start,
+            )
+        ]
+
+    def _exogenous_forecast(
+        self,
+        profile: HouseholdProfile | None,
+        manifests: list[Any],
+        *,
+        start: datetime,
+        scenario: Scenario,
+        comfort_overrides: list[ComfortOverride],
+    ) -> ExogenousForecast | None:
+        if profile is None:
+            return None
+        n_slots = scenario.horizon_hours * 60 // scenario.resolution_minutes
+        aligned = profile.align_values(start, n_slots, scenario.resolution_minutes)
+        rooms = [m.device_id for m in manifests if isinstance(m, RoomManifest)]
+        slots: list[ExogenousSlot] = []
+        for slot in aligned:
+            comfort_min: dict[str, float] = {}
+            comfort_max: dict[str, float] = {}
+            for room_id in rooms:
+                if slot.presence > 0:
+                    comfort_min[room_id] = 20.0
+                    comfort_max[room_id] = 23.5
+            for override in comfort_overrides:
+                if _matches_when(override.when, slot.presence):
+                    room_id = override.zone if override.zone in rooms else (rooms[0] if rooms else override.zone)
+                    comfort_min[room_id] = override.min_temp_c
+                    comfort_max[room_id] = override.max_temp_c
+            slots.append(
+                ExogenousSlot(
+                    timestamp=slot.timestamp,
+                    presence=slot.presence,
+                    electric_load_kw=slot.total_electric_kw(),
+                    internal_gain_kw=slot.internal_gains_w / 1000.0,
+                    dhw_energy_kwh=slot.dhw_energy_kwh(scenario.resolution_minutes),
+                    comfort_min_c=comfort_min,
+                    comfort_max_c=comfort_max,
+                )
+            )
+        house = scenario.household or {}
+        cap = house.get("main_fuse_kw") or house.get("contracted_grid_kw")
+        return ExogenousForecast(slots=slots, main_fuse_kw=float(cap) if cap is not None else None)
+
+    def _accumulate_exogenous_metrics(
+        self,
+        metrics: SimMetrics,
+        plans: list[PlanMessage],
+        exogenous: ExogenousForecast,
+        price_forecast: list[tuple[datetime, float]],
+        scenario: Scenario,
+    ) -> None:
+        dt_hours = scenario.resolution_minutes / 60.0
+        household_energy = 0.0
+        household_cost = 0.0
+        dhw_energy = 0.0
+        for i, slot in enumerate(exogenous.slots):
+            price = price_forecast[i][1] if i < len(price_forecast) else 0.30
+            household_energy += slot.electric_load_kw * dt_hours
+            household_cost += slot.electric_load_kw * dt_hours * price
+            dhw_energy += slot.dhw_energy_kwh
+            plan_power = sum(plan.slots[i].power_kw for plan in plans if i < len(plan.slots))
+            metrics.peak_total_power_kw = max(metrics.peak_total_power_kw, plan_power + slot.electric_load_kw)
+        metrics.household_energy_kwh += household_energy
+        metrics.household_cost_eur += household_cost
+        metrics.dhw_draw_energy_kwh += dhw_energy
+        metrics.total_energy_kwh += household_energy
+        metrics.total_cost_eur += household_cost
+
+
+def _matches_when(expression: str, presence: int) -> bool:
+    normalized = expression.replace(" ", "")
+    if normalized == "presence==0":
+        return presence == 0
+    if normalized == "presence>0":
+        return presence > 0
+    return True

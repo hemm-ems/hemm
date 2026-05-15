@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage
+from hemm_core.sim.exogenous import ExogenousForecast
 
 
 class SolverStatus(StrEnum):
@@ -52,6 +53,7 @@ class SolverProtocol(Protocol):
         resolution_minutes: int,
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
+        exogenous_forecast: ExogenousForecast | None = None,
     ) -> SolverResult:
         """Solve the optimization problem.
 
@@ -63,6 +65,7 @@ class SolverProtocol(Protocol):
             resolution_minutes: Time resolution per slot.
             previous_plans: Previous plans for plan-change penalty.
             weather_forecast: Outdoor temperature forecast as (timestamp, °C) pairs.
+            exogenous_forecast: Household baseload, internal gains, DHW draws, and comfort overrides.
 
         Returns:
             SolverResult with plans for each device.

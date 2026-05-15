@@ -1,0 +1,11 @@
+id: family4
+description: Two adults and two school-age children.
+resources:
+  bathroom: {capacity: 1}
+  shower_flow_lpm: {capacity: 9}
+  dishwasher: {capacity: 1}
+  washing_machine: {capacity: 1}
+behavior:
+  shower_window: {earliest: "06:00", latest: "23:00"}
+  oven_window: {earliest: "11:00", latest: "21:30"}
+

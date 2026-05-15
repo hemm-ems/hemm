@@ -31,6 +31,7 @@ from hemm_core.manifest.types import (
     ThermostatLoadManifest,
     WaterHeaterManifest,
 )
+from hemm_core.sim.exogenous import ExogenousForecast
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
 from hemm_core.time import Clock, WallClock
 
@@ -127,6 +128,7 @@ class MILPCentralSolver:
         resolution_minutes: int = 15,
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
+        exogenous_forecast: ExogenousForecast | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
         start_time = self._clock.monotonic()
@@ -137,6 +139,9 @@ class MILPCentralSolver:
 
         # Extend or truncate price forecast to match slots
         prices = self._align_prices(price_forecast, n_slots, resolution_minutes)
+        exogenous_loads = exogenous_forecast.electric_loads(n_slots) if exogenous_forecast else [0.0] * n_slots
+        internal_gains = exogenous_forecast.internal_gains(n_slots) if exogenous_forecast else [0.0] * n_slots
+        dhw_energy = exogenous_forecast.dhw_energy(n_slots) if exogenous_forecast else [0.0] * n_slots
 
         # Build the reference time
         t0 = price_forecast[0][0] if price_forecast else self._clock.now()
@@ -249,6 +254,7 @@ class MILPCentralSolver:
                         else:
                             # Thermostat loads, water heaters: electrical power ≈ heat
                             q_in += model.power[hid, t]
+                    q_in += internal_gains[t]
 
                     # RC dynamics: T[t+1] = T[t] + dt*(Q_in - UA*(T[t] - T_out)) / C
                     model.thermal_constraints.add(
@@ -256,12 +262,36 @@ class MILPCentralSolver:
                         == model.temp[rid, t] + dt_hours * (q_in - ua_kw * (model.temp[rid, t] - t_out)) / c_kwh_per_k
                     )
 
+        # Exogenous DHW draw: translate hot-water use into minimum delivered
+        # energy for the first water-heater manifest in the scenario.
+        total_dhw_kwh = sum(dhw_energy)
+        water_heaters = [did for did, m in device_map.items() if isinstance(m, WaterHeaterManifest)]
+        if total_dhw_kwh > 0.001 and water_heaters:
+            dt_hours = resolution_minutes / 60.0
+            model.dhw_constraints = pyo.ConstraintList()
+            did = water_heaters[0]
+            model.dhw_constraints.add(sum(model.power[did, t] * dt_hours for t in model.T) >= total_dhw_kwh)
+
+        # House envelope cap: a cheap single inequality per slot.
+        if exogenous_forecast and exogenous_forecast.main_fuse_kw is not None:
+            model.house_cap = pyo.ConstraintList()
+            for t in model.T:
+                model.house_cap.add(
+                    sum(model.power[d, t] for d in model.D) + exogenous_loads[t] <= exogenous_forecast.main_fuse_kw
+                )
+
         # Apply constraint windows (including thermal constraints)
         model.constraint_windows = pyo.ConstraintList()
         model.thermal_slack_lo = pyo.VarList(domain=pyo.NonNegativeReals)
         model.thermal_slack_hi = pyo.VarList(domain=pyo.NonNegativeReals)
         model.thermal_reached = pyo.VarList(domain=pyo.Binary)
         thermal_penalty_terms: list[Any] = []
+        self._apply_exogenous_comfort(
+            model,
+            exogenous_forecast,
+            n_slots,
+            thermal_penalty_terms=thermal_penalty_terms,
+        )
         self._apply_constraint_windows(
             model,
             constraint_windows,
@@ -287,6 +317,7 @@ class MILPCentralSolver:
 
         def obj_rule(m: Any) -> Any:
             energy_cost = sum(prices[t] * m.power[d, t] * (resolution_minutes / 60.0) for d in m.D for t in m.T)
+            exogenous_cost = sum(prices[t] * exogenous_loads[t] * (resolution_minutes / 60.0) for t in m.T)
             # Plan-change penalty (linear via auxiliary variables)
             change_penalty: Any = 0.0
             if prev_plan_map and self._plan_change_penalty > 0:
@@ -295,7 +326,7 @@ class MILPCentralSolver:
             comfort_penalty: Any = 0.0
             if thermal_penalty_terms:
                 comfort_penalty = sum(thermal_penalty_terms)
-            return energy_cost + change_penalty + comfort_penalty
+            return energy_cost + exogenous_cost + change_penalty + comfort_penalty
 
         model.objective = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
 
@@ -475,6 +506,30 @@ class MILPCentralSolver:
             elif isinstance(req, MaxRuntimePerDay):
                 max_slots = int(req.max_hours * 60 / resolution_minutes)
                 model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in model.T) <= max_slots)
+
+    def _apply_exogenous_comfort(
+        self,
+        model: pyo.ConcreteModel,
+        exogenous_forecast: ExogenousForecast | None,
+        n_slots: int,
+        *,
+        thermal_penalty_terms: list[Any],
+    ) -> None:
+        """Apply slot-level comfort bands generated from presence/interventions."""
+        if exogenous_forecast is None or not hasattr(model, "temp"):
+            return
+        model.exogenous_comfort = pyo.ConstraintList()
+        for t in range(min(n_slots, len(exogenous_forecast.slots))):
+            slot = exogenous_forecast.slots[t]
+            for room_id, min_temp in slot.comfort_min_c.items():
+                if (room_id, t) not in model.temp:
+                    continue
+                max_temp = slot.comfort_max_c.get(room_id, 24.0)
+                s_lo = model.thermal_slack_lo.add()
+                s_hi = model.thermal_slack_hi.add()
+                model.exogenous_comfort.add(model.temp[room_id, t] + s_lo >= min_temp)
+                model.exogenous_comfort.add(model.temp[room_id, t] - s_hi <= max_temp)
+                thermal_penalty_terms.append(5.0 * (s_lo + s_hi))
 
     def _time_to_slot(self, dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
         """Convert a datetime to a slot index."""

@@ -12,6 +12,8 @@ hemm's tests are organized by speed and scope, controlled by pytest markers.
 
 **Slow tests** (`@pytest.mark.slow`) run full multi-day simulations across all 6 standard scenarios. These take longer (30–60 seconds) and exercise the sim harness, synthetic data generators, and solver convergence over realistic horizons. They are excluded from the default `uv run pytest` run.
 
+**Occupant simulation tests** cover canonical household profiles, parquet/CSV round-trips, calendar overlays, typed interventions, LPG fixture normalization, scenario parsing, and runner metrics. Unit tests use checked-in fixtures only and never invoke LPG.
+
 **Property-based tests** use [Hypothesis](https://hypothesis.readthedocs.io/) for constraint validation and version specifier parsing. These generate random inputs and verify invariants (e.g., every valid constraint roundtrips through JSON, every version specifier comparison is consistent). They run as part of the unit suite.
 
 ---
@@ -33,6 +35,10 @@ make ci
 
 # Reproducible property-based tests
 uv run pytest --hypothesis-seed=0
+
+# Occupant A/B and sweep smoke
+uv run hemm sim run testdata/scenarios/family4_winter_setback.yaml --ab-interventions
+uv run hemm sim sweep testdata/scenarios/family4_winter_setback.yaml
 ```
 
 ---
@@ -54,12 +60,13 @@ uv run pytest --hypothesis-seed=0
 | `test_consumers.py` | unit | All 7 consumer models respond to price signals, respect constraints, charge/discharge during favorable periods |
 | `test_distributed.py` | unit | Distributed solver (price_iteration & ADMM modes), convergence, constraint handling |
 | `test_comparison.py` | unit | A/B solver comparison runner, metrics, CSV/Markdown reports, all 6 standard scenarios |
+| `test_occupants.py` | unit | Canonical profile schema, overlays, interventions, LPG normalization, household runner metrics |
 | `test_onboarding_examples.py` | unit | **Mandatory** — onboarding + full house scenarios solve, constraints met, priority ordering correct. These are the living tests for the [onboarding guide](../../ha-hemm/docs/onboarding.md). |
 | `test_sim.py` | slow | Scenario loading, simulation runner, synthetic price/weather generators, all 6 scenarios solve |
 | `test_markers.py` | unit | Marker demonstration |
 | `test_version.py` | unit | Version specifier with Hypothesis |
 
-260 unit tests pass. 7 slow tests are deselected by default.
+333 unit tests pass. 7 slow tests are deselected by default.
 
 ---
 
@@ -94,6 +101,7 @@ Six scenarios in `testdata/scenarios/` serve as the canonical test set:
 | `ev_departure.yaml` | EV charging to target SoC by departure deadline |
 | `water_heater_legionella.yaml` | Hot water with legionella constraint (reach 60°C once per window) |
 | `full_house.yaml` | All device types active simultaneously |
+| `family4_winter_setback.yaml` | Occupant demand with deterministic profile, setback, shifted load, and EV timing |
 
 ---
 
@@ -101,11 +109,11 @@ Six scenarios in `testdata/scenarios/` serve as the canonical test set:
 
 The CI workflow (`.github/workflows/ci.yml`) runs on every push to `main` and every PR:
 
-1. **Lint**: `ruff check` + `ruff format --check`
-2. **Type check**: `mypy --strict`
-3. **Test**: `uv run pytest --cov --cov-report=term-missing`
+1. **Core gate**: `make ci` on Python 3.12 and 3.13
+2. **Simulation smoke**: `make test-slow` on Python 3.12
+3. **Occupants smoke**: `hemm sim run ... --ab-interventions` and `hemm sim sweep ...`
 
-All three run in a Python version matrix (3.12, 3.13). Coverage is reported but not gated.
+The core gate includes lint, format check, strict mypy, clock audit, and unit tests.
 
 ---
 
