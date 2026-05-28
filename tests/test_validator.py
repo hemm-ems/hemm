@@ -7,6 +7,7 @@ import pytest
 from hemm_core.manifest.validator import ValidationError, validate_manifest
 
 
+@pytest.mark.req("001:FR-001", "001:FR-003")
 class TestValidatorBasics:
     """Basic validator tests."""
 
@@ -61,6 +62,7 @@ class TestValidatorBasics:
         assert manifest.device_id == "bat1"
 
 
+@pytest.mark.req("001:FR-007")
 class TestConstraintEndpointValidation:
     """Tests for constraint endpoint version validation."""
 
@@ -122,6 +124,7 @@ class TestConstraintEndpointValidation:
             )
 
 
+@pytest.mark.req("001:FR-012")
 class TestValidatorErrorMessages:
     """Tests that error messages are clear and actionable."""
 

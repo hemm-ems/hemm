@@ -21,6 +21,7 @@ from hemm_core.manifest.constraints import (
 )
 
 
+@pytest.mark.req("001:FR-004", "001:FR-006")
 class TestConstraintTypes:
     """Tests for constraint type enum."""
 
@@ -118,6 +119,7 @@ class TestMinSocUntil:
         assert 0 <= c.min_soc_pct <= 100
 
 
+@pytest.mark.req("001:FR-005")
 class TestMinEnergyUntil:
     """Tests for min_energy_until constraint — semantically different from min_soc_until."""
 

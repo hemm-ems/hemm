@@ -41,6 +41,7 @@ class TestManifestTypeEnum:
         assert len(ManifestType) == 8
 
     @pytest.mark.unit
+    @pytest.mark.req("001:FR-001")
     def test_values(self) -> None:
         expected = {
             "room",
@@ -96,6 +97,7 @@ class TestAction:
         assert a.retry.backoff_seconds == 60
 
     @pytest.mark.unit
+    @pytest.mark.req("001:FR-008")
     def test_with_verify(self) -> None:
         a = Action(
             script="script.heat_on",
@@ -415,11 +417,13 @@ class TestSafeDefaultMandatory:
     """Tests that safe_default is enforced as mandatory."""
 
     @pytest.mark.unit
+    @pytest.mark.req("001:FR-002")
     def test_missing_safe_default_raises(self) -> None:
         with pytest.raises(PydanticValidationError):
             RoomManifest(device_id="r", name="R", floor_area_m2=20.0)  # type: ignore[call-arg]
 
     @pytest.mark.unit
+    @pytest.mark.req("001:FR-002")
     def test_empty_script_raises(self) -> None:
         with pytest.raises(PydanticValidationError):
             RoomManifest(

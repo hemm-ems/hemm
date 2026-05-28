@@ -24,6 +24,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+@pytest.mark.req("001:FR-009")
 class TestPlanMessage:
     """Tests for plan messages."""
 
@@ -141,6 +142,7 @@ class TestConstraintWindow:
         assert restored == w
 
 
+@pytest.mark.req("001:FR-010")
 class TestConflictResolution:
     """Tests for conflict resolution — higher penalty wins."""
 

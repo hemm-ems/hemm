@@ -16,6 +16,7 @@ from hemm_core.manifest.schema_export import (
 )
 
 
+@pytest.mark.req("001:FR-011")
 class TestSchemaExport:
     """Tests for schema export functions."""
 
@@ -107,6 +108,7 @@ class TestCLISchema:
         assert ret == 1
 
 
+@pytest.mark.req("001:FR-011")
 class TestCLIValidate:
     """Tests for CLI validate command."""
 
