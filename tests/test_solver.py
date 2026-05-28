@@ -94,6 +94,7 @@ def _make_price_forecast(n_slots: int = 96, base: float = 0.30) -> list[tuple[da
 # --- Tests ---
 
 
+@pytest.mark.req("002:FR-001")
 class TestSolverProtocol:
     """Tests for the solver protocol compliance."""
 
@@ -110,6 +111,7 @@ class TestSolverProtocol:
         assert result.solve_time_seconds == 0.0
 
 
+@pytest.mark.req("002:FR-008")
 class TestPiecewiseCOP:
     """Tests for piecewise-linear COP interpolation."""
 
@@ -152,6 +154,7 @@ class TestPiecewiseCOP:
             assert error_pct < 5.0, f"COP error {error_pct}% at {temp}°C"
 
 
+@pytest.mark.req("002:FR-002", "002:FR-003", "002:FR-004", "002:FR-005", "002:FR-006", "002:FR-007")
 class TestMILPCentralSolver:
     """Tests for the MILP central solver."""
 
@@ -378,6 +381,7 @@ class TestMILPCentralSolver:
         assert result.solve_time_seconds > 0
 
 
+@pytest.mark.req("002:FR-008")
 class TestMILPCOPIntegration:
     """Tests for COP integration with the solver."""
 
@@ -550,6 +554,7 @@ def _make_cold_weather(n_slots: int = 96) -> list[tuple[datetime, float]]:
 # --- Thermal model tests ---
 
 
+@pytest.mark.req("002:FR-009")
 class TestThermalModel:
     """Tests for the lumped-RC thermal model in the MILP solver."""
 

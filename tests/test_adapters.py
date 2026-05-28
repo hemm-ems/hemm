@@ -12,6 +12,7 @@ from hemm_core.adapters.solcast import SolcastAdapter
 from hemm_core.adapters.template import TemplateAdapter
 
 
+@pytest.mark.req("004:FR-001")
 class TestForecastPoint:
     """Tests for the canonical forecast point schema."""
 
@@ -38,6 +39,7 @@ class TestForecastPoint:
         assert fp2.unit == fp.unit
 
 
+@pytest.mark.req("004:FR-003", "004:FR-005")
 class TestAdapterRegistry:
     """Tests for the adapter registry."""
 
@@ -78,6 +80,7 @@ class TestAdapterRegistry:
         assert registry.has("template")
 
 
+@pytest.mark.req("004:FR-002", "004:FR-004")
 class TestSolcastAdapter:
     """Tests for the Solcast adapter."""
 
@@ -138,6 +141,7 @@ class TestForecastSolarAdapter:
         assert points[0].value == 8.0
 
 
+@pytest.mark.req("004:FR-004")
 class TestTemplateAdapter:
     """Tests for the Jinja2 template adapter."""
 

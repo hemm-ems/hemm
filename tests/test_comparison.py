@@ -50,6 +50,7 @@ class TestComparisonMetrics:
         assert m.plan_stability_ratio == 0.0
 
 
+@pytest.mark.req("005:FR-005")
 class TestComparisonReport:
     """Tests for ComparisonReport."""
 
@@ -79,6 +80,7 @@ class TestComparisonReport:
         assert "Decision Metrics" in md
 
 
+@pytest.mark.req("005:FR-004")
 class TestABComparisonRunner:
     """Tests for the A/B comparison runner."""
 

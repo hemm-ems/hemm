@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 from hemm_core.manifest.version import VersionSpecifier, check_version
 
 
+@pytest.mark.req("001:FR-006")
 class TestVersionSpecifierParsing:
     """Tests for parsing version specifier strings."""
 

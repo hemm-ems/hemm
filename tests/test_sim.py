@@ -15,6 +15,7 @@ TESTDATA_DIR = Path(__file__).parent.parent / "testdata"
 SCENARIOS_DIR = TESTDATA_DIR / "scenarios"
 
 
+@pytest.mark.req("005:FR-006")
 class TestSyntheticSeries:
     """Tests for synthetic time series generators."""
 
@@ -54,6 +55,7 @@ class TestSyntheticSeries:
         assert max(temps) - min(temps) > 5.0  # meaningful variation
 
 
+@pytest.mark.req("005:FR-001", "005:FR-003")
 class TestScenarioLoading:
     """Tests for scenario file loading."""
 
@@ -109,6 +111,7 @@ class TestScenarioLoading:
             assert scenario.name
 
 
+@pytest.mark.req("005:FR-002")
 class TestSimRunner:
     """Tests for the simulation runner."""
 
