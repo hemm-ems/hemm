@@ -53,7 +53,22 @@ uv pip install -e ../hemm
 - **Two solver backends** — Central MILP (Pyomo + HiGHS, default) and distributed optimization (experimental, price iteration / ADMM). Both read identical manifests.
 - **Forecast adapters** — pluggable sources for PV and price forecasts (Solcast, Forecast.Solar, template fallback).
 - **Simulation harness** — run scenarios against historical data, compare solver backends, generate Markdown reports.
+- **Occupant demand simulation** — deterministic household profiles add baseload, DHW draws, presence, internal gains, and typed interventions for savings A/B runs.
 - **No vendor knowledge in core** — device quirks belong in HA automations, not here.
+
+## Occupant Simulation
+
+Occupant demand lives entirely in the core simulation harness. Scenarios may add a `household:` block that points at a baked canonical profile or uses the deterministic synthetic adapter. Interventions are typed diffs against the same profile and seed, so `hemm sim run <scenario> --ab-interventions` reports attributable cost and energy deltas.
+
+```bash
+hemm sim bake-profile --archetype family4 --year 2026 --seed 17 \
+  --output testdata/profiles/family4-2026-s17.parquet --synthetic-fixture
+
+hemm sim run testdata/scenarios/family4_winter_setback.yaml --ab-interventions
+hemm sim sweep testdata/scenarios/family4_winter_setback.yaml
+```
+
+LPG is supported as an out-of-process bake source through `HEMM_LPG_ENGINE` or `HEMM_LPG_DOCKER_IMAGE`; LPG binaries are not vendored.
 
 ## Testing
 

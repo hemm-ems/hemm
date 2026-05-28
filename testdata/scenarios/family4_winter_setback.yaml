@@ -1,0 +1,56 @@
+name: family4_winter_setback
+description: One winter day, family of 4 baseline vs. setback and shifted dishwasher.
+horizon_hours: 24
+resolution_minutes: 15
+days: 1
+tags:
+  - occupants
+  - standard
+
+household:
+  adapter: lpg
+  archetype: family4
+  seed: 17
+  year: 2026
+  start: 2026-01-15
+  profile: ../profiles/family4-2026-s17.parquet
+  calendar:
+    wfh_days: [wed]
+  main_fuse_kw: 17.0
+
+price_profile: default
+price_params:
+  base_price: 0.32
+  peak_price: 0.48
+  off_peak_price: 0.18
+
+weather_profile: default
+weather_params:
+  min_temp_c: -2.0
+  max_temp_c: 4.0
+
+manifests:
+  - ../manifests/simple_house/room_living.json
+  - ../manifests/simple_house/heat_pump.json
+  - ../manifests/simple_house/water_heater.json
+  - ../manifests/simple_house/battery.json
+  - ../manifests/simple_house/pv_forecast.json
+  - ../manifests/simple_house/ev_charger.json
+  - ../manifests/simple_house/kitchen_loads.json
+
+interventions:
+  - id: shift_dishwasher_to_pv
+    type: shift_load
+    appliance: dishwasher
+    to_window: {earliest: "11:00", latest: "16:00"}
+  - id: setback_workday
+    type: setpoint
+    zone: living_room
+    setpoint_c: 18.0
+    when: "presence == 0"
+  - id: ev_pv_match
+    type: ev_timing
+    device_id: ev_charger_garage
+    energy_kwh: 8.0
+    deadline_local: "07:00"
+    prefer: pv_surplus

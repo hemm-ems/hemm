@@ -104,19 +104,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Lint
-        run: |
-          uv run ruff check src/ tests/
-          uv run ruff format --check src/ tests/
-
-      - name: Type check
-        run: uv run mypy
-
-      - name: Unit tests
-        run: uv run pytest --cov --cov-report=term-missing
+      - name: CI gate
+        run: make ci
 
       - name: Slow tests (all scenarios)
-        run: uv run pytest -m slow --tb=short
+        run: make test-slow
+
+      - name: Occupants CLI smoke
+        run: uv run hemm sim run testdata/scenarios/family4_winter_setback.yaml --ab-interventions
 
   # ---------- Job 3: check changes & release ----------
   release:

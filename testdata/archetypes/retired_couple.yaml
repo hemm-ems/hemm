@@ -1,0 +1,7 @@
+id: retired_couple
+description: High daytime presence and regular evening cooking.
+resources:
+  bathroom: {capacity: 1}
+  shower_flow_lpm: {capacity: 9}
+  dishwasher: {capacity: 1}
+

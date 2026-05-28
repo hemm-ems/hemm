@@ -1,0 +1,7 @@
+id: working_couple
+description: Two adults with similar work hours.
+resources:
+  bathroom: {capacity: 1}
+  shower_flow_lpm: {capacity: 9}
+  dishwasher: {capacity: 1}
+

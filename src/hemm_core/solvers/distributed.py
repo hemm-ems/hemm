@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
+from hemm_core.sim.exogenous import ExogenousForecast
 from hemm_core.solvers.consumers import ConsumerModel, get_consumer_model
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
 from hemm_core.time import Clock, WallClock
@@ -87,6 +88,7 @@ class DistributedSolver:
         resolution_minutes: int = 15,
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
+        exogenous_forecast: ExogenousForecast | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
         start_time = self._clock.monotonic()

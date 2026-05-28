@@ -25,8 +25,11 @@ class Scenario:
     weather_profile: str = "default"
     price_params: dict[str, Any] = field(default_factory=dict)
     weather_params: dict[str, Any] = field(default_factory=dict)
+    household: dict[str, Any] | None = None
+    interventions: list[dict[str, Any]] = field(default_factory=list)
     expected_solve_time_seconds: float | None = None
     tags: list[str] = field(default_factory=list)
+    base_dir: Path | None = None
 
 
 def load_scenario(path: str | Path) -> Scenario:
@@ -69,8 +72,11 @@ def load_scenario(path: str | Path) -> Scenario:
         weather_profile=data.get("weather_profile", "default"),
         price_params=data.get("price_params", {}),
         weather_params=data.get("weather_params", {}),
+        household=data.get("household"),
+        interventions=data.get("interventions", []),
         expected_solve_time_seconds=data.get("expected_solve_time_seconds"),
         tags=data.get("tags", []),
+        base_dir=filepath.parent,
     )
 
 

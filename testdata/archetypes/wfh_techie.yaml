@@ -1,0 +1,7 @@
+id: wfh_techie
+description: High daytime presence and electronics baseload.
+resources:
+  bathroom: {capacity: 1}
+  shower_flow_lpm: {capacity: 9}
+  dishwasher: {capacity: 1}
+
