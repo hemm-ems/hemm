@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import subprocess
 import sys
 
@@ -15,7 +16,7 @@ class TestImport:
     def test_import_hemm(self) -> None:
         import hemm_core
 
-        assert hemm_core.__version__ == "0.1.0"
+        assert hemm_core.__version__ == importlib.metadata.version("hemm")
 
     def test_import_cli(self) -> None:
         from hemm_core.cli import main
@@ -43,7 +44,7 @@ class TestCLI:
             text=True,
         )
         assert result.returncode == 0
-        assert "0.1.0" in result.stdout
+        assert importlib.metadata.version("hemm") in result.stdout
 
     def test_info_command(self) -> None:
         from hemm_core.cli import main
