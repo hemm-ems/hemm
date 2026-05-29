@@ -45,8 +45,8 @@ dev = [
 hemm = "hemm_core.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/hemm-energy/hemm"
-Repository = "https://github.com/hemm-energy/hemm"
+Homepage = "https://github.com/hemm-ems/hemm"
+Repository = "https://github.com/hemm-ems/hemm"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hemm_core"]
