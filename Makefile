@@ -1,4 +1,4 @@
-.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean check-clock branding-audit
+.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean check-clock branding-audit req-coverage gate
 
 ## Default: fast unit tests only
 test:
@@ -28,9 +28,17 @@ check-clock:
 		--allow src/hemm_core/cli.py \
 		--allow src/hemm_core/__main__.py
 
-## Branding audit: intentionally allowed to fail until the Phase 3 rename lands.
+## Branding audit: scan the core repo + the sibling ha-hemm checkout.
 branding-audit:
-	python3 ../tools/branding_audit.py
+	python3 tools/branding_audit.py
+
+## Requirement-coverage gate: SR -> FR -> test. Needs the sibling ha-hemm checkout.
+req-coverage:
+	python3 tools/req_coverage.py --check
+
+## Cross-repo traceability gate (req coverage + branding). Run from core with
+## ha-hemm checked out as a sibling (../ha-hemm). This is the authoritative gate.
+gate: req-coverage branding-audit
 
 ## CI full: ci + container tests
 ci-full: ci test-container

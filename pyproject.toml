@@ -91,7 +91,7 @@ markers = [
     "container: Container-based integration tests (requires Docker)",
     "pi: Tests that run on Raspberry Pi hardware only",
     "slow: Long-running simulation tests",
-    "req: Requirement(s) this test covers, e.g. req('002:FR-001') — scanned by ../tools/req_coverage.py",
+    "req: Requirement(s) this test covers, e.g. req('002:FR-001') — scanned by tools/req_coverage.py",
 ]
 addopts = "-m 'not container and not pi and not slow' --strict-markers"
 asyncio_mode = "auto"

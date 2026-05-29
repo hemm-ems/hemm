@@ -52,7 +52,6 @@ jobs:
       - name: Test
         run: uv run pytest --cov --cov-report=term-missing
 
-  # Cross-repo requirement-coverage gate runs in hemm-ems/hemm-project
-  # (Traceability workflow: on push + nightly). It is not called per-PR here
-  # because the umbrella is private and cross-repo reusable-workflow calls are
-  # blocked by org policy; the umbrella-side run is the authoritative gate.
+  # The cross-repo requirement-coverage + branding gate lives in this repo's
+  # own Traceability workflow (.github/workflows/traceability.yml), which checks
+  # out the sibling ha-hemm repo. That is the authoritative SR -> FR -> test gate.

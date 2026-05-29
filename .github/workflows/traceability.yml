@@ -1,0 +1,58 @@
+name: Traceability
+
+# Cross-repo requirement-coverage + branding gate. Hosted in the core repo
+# (home base for specs/ and tools/). It checks out the sibling ha-hemm repo so
+# the SR -> FR -> test matrix and the branding audit cover both repos.
+# ha-hemm changes are covered by the nightly run (and may later trigger this via
+# repository_dispatch). This is the authoritative gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ha-ref:
+        description: "ha-hemm ref to check out"
+        required: false
+        type: string
+        default: main
+
+concurrency:
+  group: traceability-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Requirement coverage + branding
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout core
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: hemm
+          persist-credentials: false
+
+      - name: Checkout ha-hemm (sibling)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: hemm-ems/ha-hemm
+          ref: ${{ inputs.ha-ref || 'main' }}
+          path: ha-hemm
+          persist-credentials: false
+
+      - name: Requirement coverage
+        working-directory: hemm
+        run: python3 tools/req_coverage.py --check
+
+      - name: Branding audit
+        working-directory: hemm
+        run: python3 tools/branding_audit.py
