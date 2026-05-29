@@ -46,5 +46,15 @@ jobs:
       - name: Type check
         run: uv run mypy
 
+      - name: Clock audit
+        run: make check-clock
+
       - name: Test
         run: uv run pytest --cov --cov-report=term-missing
+
+  traceability:
+    name: Traceability
+    uses: hemm-ems/hemm-project/.github/workflows/traceability.yml@main
+    with:
+      core-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      ha-ref: main

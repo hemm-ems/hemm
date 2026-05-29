@@ -1,65 +1,28 @@
-"""CI guard: fail if any expected requirement tag disappears from the test tree.
+"""CI guard: fail if the committed req-tag manifest drifts from the tests.
 
 The `@pytest.mark.req("NNN:FR-MMM")` tags link this repo's tests to the spec FRs
-in the parent `specs/` repo. They have been silently dropped during past rebases
-and the hemm→hemm_core rename, tearing out the SR→FR→test coverage linkage. This
-test makes that loud: if a tag goes missing, CI fails here.
-
-If a test is removed on purpose, update EXPECTED_FRS below in the same change (and
-flip the FR's status in its spec, since it is no longer test-backed).
+in the parent `specs/` repo. The manifest is generated from the parent tool:
+`python3 tools/req_coverage.py --write-tag-manifests`.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
-
-# FR IDs this repo's tests must keep covering. Update deliberately, never to
-# silence a real regression.
-EXPECTED_FRS = {
-    "001:FR-001",
-    "001:FR-002",
-    "001:FR-003",
-    "001:FR-004",
-    "001:FR-005",
-    "001:FR-006",
-    "001:FR-007",
-    "001:FR-008",
-    "001:FR-009",
-    "001:FR-010",
-    "001:FR-011",
-    "001:FR-012",
-    "002:FR-001",
-    "002:FR-002",
-    "002:FR-003",
-    "002:FR-004",
-    "002:FR-005",
-    "002:FR-006",
-    "002:FR-007",
-    "002:FR-008",
-    "002:FR-009",
-    "004:FR-001",
-    "004:FR-002",
-    "004:FR-003",
-    "004:FR-004",
-    "004:FR-005",
-    "005:FR-001",
-    "005:FR-002",
-    "005:FR-003",
-    "005:FR-004",
-    "005:FR-005",
-    "005:FR-006",
-}
 
 _REQ_REF = re.compile(r"(?:@pytest\.mark\.req\(|#\s*REQ:)\s*([^)\n]+)")
 _REQ_ID = re.compile(r"\d{3}:FR-\d{3}")
 
 
 @pytest.mark.unit
-def test_expected_req_tags_present() -> None:
+def test_req_tags_match_committed_manifest() -> None:
     tests_dir = Path(__file__).parent
+    manifest = json.loads((tests_dir / "req_tags_manifest.json").read_text(encoding="utf-8"))
+    expected = set(manifest["frs"])
+
     found: set[str] = set()
     for py in tests_dir.rglob("test_*.py"):
         if py.name == Path(__file__).name:
@@ -67,8 +30,10 @@ def test_expected_req_tags_present() -> None:
         for ref in _REQ_REF.finditer(py.read_text(encoding="utf-8")):
             found.update(_REQ_ID.findall(ref.group(1)))
 
-    missing = EXPECTED_FRS - found
-    assert not missing, (
-        f"Requirement tags lost for {sorted(missing)}. If a test was removed on "
-        f"purpose, update EXPECTED_FRS here and the FR's status in its spec."
+    assert found == expected, (
+        "Requirement tags differ from tests/req_tags_manifest.json. "
+        "Run `python3 tools/req_coverage.py --write-tag-manifests` from the "
+        "umbrella repo when adding/removing req tags. "
+        f"Missing from tests: {sorted(expected - found)}; "
+        f"missing from manifest: {sorted(found - expected)}"
     )

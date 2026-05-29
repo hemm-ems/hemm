@@ -1,4 +1,4 @@
-.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean check-clock
+.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean check-clock branding-audit
 
 ## Default: fast unit tests only
 test:
@@ -27,6 +27,10 @@ check-clock:
 		--allow src/hemm_core/time \
 		--allow src/hemm_core/cli.py \
 		--allow src/hemm_core/__main__.py
+
+## Branding audit: intentionally allowed to fail until the Phase 3 rename lands.
+branding-audit:
+	python3 ../tools/branding_audit.py
 
 ## CI full: ci + container tests
 ci-full: ci test-container
