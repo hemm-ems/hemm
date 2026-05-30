@@ -114,6 +114,19 @@ done FRs covered at intended tier: 4/4
 | FR-003 | ✅ done | integration | integration | test_pypi_install.py |
 | FR-004 | ✅ done | unit | unit | test_release_packaging.py |
 
+## Spec 010
+done FRs covered at intended tier: 5/5
+
+| FR | Status | Want | Coverage | Tests |
+|----|--------|------|----------|-------|
+| FR-001 | ✅ done | integration | integration | test_actuation_phase7.py, test_actuator.py |
+| FR-002 | ✅ done | integration | integration | test_actuation_phase7.py, test_actuator.py |
+| FR-003 | ✅ done | integration | integration | test_actuation_phase7.py, test_actuator.py |
+| FR-004 | 🔶 partial | integration | integration | test_actuation_phase7.py, test_actuator.py |
+| FR-005 | ✅ done | integration | integration | test_actuation_phase7.py, test_actuator.py |
+| FR-006 | ✅ done | integration | integration | test_actuation_phase7.py, test_actuator.py |
+| FR-007 | 🔶 partial | integration | integration | test_actuation_phase7.py, test_actuator.py |
+
 ## System Requirements (SR) rollup
 
 | SR | Title | FRs | done covered | FR ids |
@@ -126,7 +139,7 @@ done FRs covered at intended tier: 4/4
 | SR-006 | Devices describe themselves declaratively; the core holds no vendor knowledge | 8 | 8/8 | 001:FR-001, 001:FR-002, 001:FR-004, 001:FR-005, 001:FR-006, 001:FR-007, 001:FR-011, 001:FR-012 |
 | SR-007 | Forecast and price signals enter through pluggable adapters | 8 | 6/6 | 004:FR-001, 004:FR-002, 004:FR-003, 004:FR-004, 004:FR-005, 004:FR-006, 004:FR-007, 008:FR-010 |
 | SR-008 | Demand enters through a service API driven by HA automations | 4 | 3/3 | 001:FR-010, 008:FR-006, 008:FR-007, 008:FR-009 |
-| SR-009 | HEMM observes and plans, but actuates only through verified user actions | 4 | 3/3 | 001:FR-003, 001:FR-008, 001:FR-013, 008:FR-008 |
+| SR-009 | HEMM observes and plans, but actuates only through verified user actions | 11 | 8/8 | 001:FR-003, 001:FR-008, 001:FR-013, 008:FR-008, 010:FR-001, 010:FR-002, 010:FR-003, 010:FR-004, 010:FR-005, 010:FR-006, 010:FR-007 |
 | SR-010 | Setup scales from beginner to pro, with transparent model refinement | 8 | 4/4 | 006:FR-001, 006:FR-002, 006:FR-003, 006:FR-004, 006:FR-005, 006:FR-006, 007:FR-005, 007:FR-006 |
 | SR-011 | Solver/domain logic is a standalone, HA-independent core | 0 | 0/0 | — |
 | SR-012 | HEMM is distributed as a PyPI core and a HACS-installable HA integration | 4 | 4/4 | 009:FR-001, 009:FR-002, 009:FR-003, 009:FR-004 |

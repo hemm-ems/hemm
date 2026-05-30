@@ -4,7 +4,7 @@
 
 **Created**: 2026-05-29
 
-**Status**: Forward — Phase 7 (all FRs ⬜ todo; TDD red→green, container-proven)
+**Status**: Phase 7 landed 2026-05-29 (ha-hemm `2f6c2b8`..`c3f78f3`); 5 FRs done, 2 partial pending test-ordering polish
 
 **Input**: `concept-hemm.md` ("Plug point 2: actuation", read-only onboarding,
 "safe default"); `local-concept-roast.md` weaknesses #4 (self-confirming verify)
@@ -79,36 +79,40 @@ trust contract for a new install and the default posture.
 
 ### Functional Requirements
 
-- **FR-001** `⬜ todo` `SR-009`: The actuator engine MUST, for a decided action,
+- **FR-001** `✅ done` `SR-009`: The actuator engine MUST, for a decided action,
   call the user's HA script, then evaluate the `VerificationContract` (entity
   reaches `expected` within `within_seconds`); on verify failure it MUST retry
   per `RetryPolicy` (`max_attempts`, `backoff_seconds`) and, on terminal failure,
   invoke the device's `safe_default` and raise a repair issue. HEMM MUST NOT
   write the target entity directly — only the user script does.
-- **FR-002** `⬜ todo` `SR-009`: HEMM MUST default to an observe-first, read-only
+- **FR-002** `✅ done` `SR-009`: HEMM MUST default to an observe-first, read-only
   mode in which it produces plans and sensors but issues no script calls.
   Actuation MUST be opt-in (an explicit, persisted enable); the onboarding
   scenario MUST pass end-to-end with zero actuator calls in the default mode.
-- **FR-003** `⬜ todo` `SR-009`: The actuator engine MUST honor `dry_run: true` —
+- **FR-003** `✅ done` `SR-009`: The actuator engine MUST honor `dry_run: true` —
   run the full path including verification evaluation and audit recording, with
   no real script call and no state change.
-- **FR-004** `⬜ todo` `SR-009`: Immediately before every actuation call, HEMM
+- **FR-004** `🔶 partial` `SR-009`: Immediately before every actuation call, HEMM
   MUST re-validate the hard constraints / current state for that device; if the
   pre-call check fails, HEMM MUST skip the script call and fall back to the
-  device's `safe_default`.
-- **FR-005** `⬜ todo` `SR-009`: A watchdog MUST invoke each device's
+  device's `safe_default`. *(Engine + unit-tested; container SC-005 passes in
+  isolation but is flaky in the full Phase 7 suite due to shared HA session
+  state — needs deterministic constraint-state reset between tests.)*
+- **FR-005** `✅ done` `SR-009`: A watchdog MUST invoke each device's
   `safe_default` action when the coordinator has not completed a successful
   update within a configurable timeout (default 30 min). Watchdog-driven
   safe_default MUST run even when actuation is in read-only mode or a device
   override is active (safety overrides observe-first).
-- **FR-006** `⬜ todo` `SR-009`: HEMM MUST expose a per-device override
+- **FR-006** `✅ done` `SR-009`: HEMM MUST expose a per-device override
   (`switch.hemm_<device>_override`) that, while on, suspends HEMM actuation for
   that device (treated as observe-only) without affecting other devices.
-- **FR-007** `⬜ todo` `SR-009`: HEMM MUST maintain an inspectable, anonymized
+- **FR-007** `🔶 partial` `SR-009`: HEMM MUST maintain an inspectable, anonymized
   actuation audit log (a sensor and/or the diagnostics dump) recording each
   attempt and its outcome (`verified` / `unverified` / `retried` /
   `safe_default` / `skipped:read_only` / `skipped:override` / `dry_run`), with no
-  raw entity values that would leak PII.
+  raw entity values that would leak PII. *(Engine + unit-tested; container SC-008
+  passes in isolation but the anonymization-audit assertion is flaky when run
+  after several other SCs — same shared-session-state cause as FR-004.)*
 
 ### Key Entities
 
