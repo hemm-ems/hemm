@@ -1,4 +1,4 @@
-.PHONY: test test-container test-pi test-slow ci ci-full lint format build clean check-clock branding-audit req-coverage gate
+.PHONY: test test-container test-container-sc test-pi test-slow ci ci-full lint format build clean check-clock branding-audit req-coverage gate remap
 
 ## Default: fast unit tests only
 test:
@@ -7,6 +7,16 @@ test:
 ## Container-based integration tests (Docker required)
 test-container:
 	uv run pytest -m container
+
+## Per-SC container run. Usage: make test-container-sc SC=SC-005
+## Skips full-suite teardown for faster iteration when stack is already up.
+test-container-sc:
+	@[ -n "$(SC)" ] || (echo "Usage: make test-container-sc SC=SC-005" && exit 2)
+	uv run pytest -m container -k "$(SC)" --tb=short -q
+
+## Regenerate docs/CODEBASE_MAP.md via the cartographer skill (headless claude).
+remap:
+	bash tools/remap.sh
 
 ## Pi hardware tests (manual / self-hosted runner)
 test-pi:

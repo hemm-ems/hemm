@@ -94,6 +94,7 @@ See `ha-hemm/docs/time-warp.md`.
 - `make ci` — lint + typecheck + check-clock + test
 - `make ci-full` — ci + container tests
 - `make test-container` — container tests only
+- `make test-container-sc SC=<id>` — single SC iteration (e.g. `SC=SC-005`)
 - `make test-slow` — long-running sims
 - `make test-pi` — Pi hardware tests
 - `make gate` — cross-repo requirement-coverage + branding gate (needs `../ha-hemm`)
@@ -103,3 +104,4 @@ See `ha-hemm/docs/time-warp.md`.
 - `make format` — auto-format
 - `make typecheck` — mypy strict
 - `make build` — build wheel
+- `make remap` — regenerate `docs/CODEBASE_MAP.md` via the cartographer skill (requires the Claude Code CLI on `PATH`; the map file is gitignored in both repos)
