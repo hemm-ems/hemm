@@ -15,11 +15,11 @@ from hemm_core.manifest.types import (
     Action,
     BatteryManifest,
     ControlClass,
-    DeviceRole,
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
     PassiveLoadManifest,
+    Primitive,
     RetryPolicy,
     RoomManifest,
     VerificationContract,
@@ -56,33 +56,38 @@ class TestManifestTypeEnum:
         assert {t.value for t in ManifestType} == expected
 
 
-class TestDeviceRole:
-    """Tests for DeviceRole enum and ManifestType.role property."""
+class TestPrimitiveMapping:
+    """Tests for Primitive enum and ManifestType.primitives property."""
 
     @pytest.mark.unit
-    def test_five_roles(self) -> None:
-        assert len(DeviceRole) == 5
+    @pytest.mark.req("003:FR-011")
+    def test_five_primitives(self) -> None:
+        assert len(Primitive) == 5
 
     @pytest.mark.unit
-    def test_role_values(self) -> None:
-        expected = {"generator", "adjustable_sink", "passive_sink", "storage", "thermal_zone"}
-        assert {r.value for r in DeviceRole} == expected
+    @pytest.mark.req("003:FR-011")
+    def test_primitive_values(self) -> None:
+        expected = {"source", "sink", "storage", "converter", "node"}
+        assert {p.value for p in Primitive} == expected
 
     @pytest.mark.unit
-    def test_every_manifest_type_has_role(self) -> None:
+    @pytest.mark.req("003:FR-011")
+    def test_every_manifest_type_has_primitives(self) -> None:
         for mt in ManifestType:
-            assert isinstance(mt.role, DeviceRole)
+            assert mt.primitives
+            assert all(isinstance(p, Primitive) for p in mt.primitives)
 
     @pytest.mark.unit
-    def test_role_mapping(self) -> None:
-        assert ManifestType.ROOM.role == DeviceRole.THERMAL_ZONE
-        assert ManifestType.THERMOSTAT_LOAD.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.HEAT_PUMP.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.WATER_HEATER.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.BATTERY.role == DeviceRole.STORAGE
-        assert ManifestType.PV_FORECAST.role == DeviceRole.GENERATOR
-        assert ManifestType.EV_CHARGER.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.PASSIVE_LOAD.role == DeviceRole.PASSIVE_SINK
+    @pytest.mark.req("003:FR-011")
+    def test_primitive_mapping(self) -> None:
+        assert ManifestType.ROOM.primitives == (Primitive.NODE,)
+        assert ManifestType.THERMOSTAT_LOAD.primitives == (Primitive.CONVERTER, Primitive.SINK)
+        assert ManifestType.HEAT_PUMP.primitives == (Primitive.CONVERTER, Primitive.SINK)
+        assert ManifestType.WATER_HEATER.primitives == (Primitive.NODE, Primitive.CONVERTER, Primitive.STORAGE)
+        assert ManifestType.BATTERY.primitives == (Primitive.STORAGE,)
+        assert ManifestType.PV_FORECAST.primitives == (Primitive.SOURCE,)
+        assert ManifestType.EV_CHARGER.primitives == (Primitive.STORAGE,)
+        assert ManifestType.PASSIVE_LOAD.primitives == (Primitive.SINK,)
 
 
 class TestAction:

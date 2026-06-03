@@ -38,13 +38,13 @@ unchanged solver. No behavior change yet.
 
 **⚠️ CRITICAL**: No user-story phase can begin until this is complete.
 
-- [ ] T004 Define the `Primitive` enum (`source`/`sink`/`storage`/`converter`/`node`) in `src/hemm_core/manifest/components.py`. [FR-001]
-- [ ] T005 Define the `ComponentSpec` family (`SourceSpec`/`SinkSpec`/`StorageSpec`/`ConverterSpec`/`NodeSpec`) in `src/hemm_core/manifest/components.py`, including `ConverterSpec.factor_at(ctx)` lifting `_piecewise_cop` (clamped at ends). [FR-001, FR-007]
-- [ ] T006 Implement `to_components()` on all 8 named types in `src/hemm_core/manifest/types.py` per the data-model.md mapping table (incl. **ThermostatLoad *and* HeatPump `room_id` conditional → converter else `sink`**, research D4 symmetry, and WaterHeater node+converter+storage). [FR-002] (depends on T004, T005)
-- [ ] T007 Fold `DeviceRole` into `Primitive`: remove `_TYPE_ROLES`, replace with the type→primitive(s) mapping, update `src/hemm_core/manifest/__init__.py` `__all__`. [FR-011] (depends on T004)
-- [ ] T008 [P] Unit test: `Primitive` has 5 members and `DeviceRole` is gone/folded, in `tests/test_components.py`. `# REQ: 003:FR-001, 003:FR-011`
-- [ ] T009 [P] Unit test: `to_components()` per type (×8) yields the expected primitive set, and the compile path contains no `isinstance`-on-named-manifest-type, in `tests/test_components.py`. `# REQ: 003:FR-002, 003:FR-003`
-- [ ] T010 [P] Unit test: every `testdata/scenarios/*.yaml` manifest round-trips to a well-formed component set, in `tests/test_components.py`. `# REQ: 003:FR-004`
+- [X] T004 Define the `Primitive` enum (`source`/`sink`/`storage`/`converter`/`node`) in `src/hemm_core/manifest/components.py`. [FR-001]
+- [X] T005 Define the `ComponentSpec` family (`SourceSpec`/`SinkSpec`/`StorageSpec`/`ConverterSpec`/`NodeSpec`) in `src/hemm_core/manifest/components.py`, including `ConverterSpec.factor_at(ctx)` lifting `_piecewise_cop` (clamped at ends). [FR-001, FR-007]
+- [X] T006 Implement `to_components()` on all 8 named types in `src/hemm_core/manifest/types.py` per the data-model.md mapping table (incl. **ThermostatLoad *and* HeatPump `room_id` conditional → converter else `sink`**, research D4 symmetry, and WaterHeater node+converter+storage). [FR-002] (depends on T004, T005)
+- [X] T007 Fold `DeviceRole` into `Primitive`: remove `_TYPE_ROLES`, replace with the type→primitive(s) mapping, update `src/hemm_core/manifest/__init__.py` `__all__`. [FR-011] (depends on T004)
+- [X] T008 [P] Unit test: `Primitive` has 5 members and `DeviceRole` is gone/folded, in `tests/test_components.py`. `# REQ: 003:FR-001, 003:FR-011`
+- [X] T009 [P] Unit test: `to_components()` per type (×8) yields the expected primitive set, and the compile path contains no `isinstance`-on-named-manifest-type, in `tests/test_components.py`. `# REQ: 003:FR-002, 003:FR-003`
+- [X] T010 [P] Unit test: every `testdata/scenarios/*.yaml` manifest round-trips to a well-formed component set, in `tests/test_components.py`. `# REQ: 003:FR-004`
 
 **Checkpoint**: component model proven; solver still on the old path.
 
