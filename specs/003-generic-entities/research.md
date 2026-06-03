@@ -54,11 +54,15 @@ optional comfort band; (b) a **converter** elec→DHW with η≈1; (c) **storage
 water heater is a plain sink whose `reach_min_temp_once` is handled via a tank thermal-mass
 special-case (002:FR-009). The node+storage decomposition generalizes that.
 
-**Parity note**: For scenarios that only use `reach_min_temp_once` on the tank (e.g.
-`water_heater_legionella.yaml`), the decomposed model MUST reproduce the existing tank
-temperature trajectory within tolerance. The storage leakage term = the current
-`standby_loss_w` / `loss_coefficient_w_per_k`; the converter η = 1 matches the current
-"electrical ≈ heat" assumption. Validated by `test_solver_parity.py`.
+**Parity note (corrected — see D8)**: An empirical check of the captured golden (T001)
+showed the pre-refactor WaterHeater has **no** temperature trajectory at all: as a plain
+sink with no `room_id`, `dhw` has no `model.temp` var, so `reach_min_temp_once` finds no
+target and is *silently dropped* — `water_heater_legionella` and `full_house`'s `dhw` plan
+**zero power** today. The decomposition therefore does **not** "reproduce an existing
+trajectory" (there is none); it makes the tank finally heat to 60 °C. That is an **intended
+divergence** (enumerated in FR-006), validated by a US3 correctness test (DHW reaches 60 °C
+by the deadline), **not** by golden parity. The storage leakage term = the current
+`standby_loss_w`; converter η = 1 keeps the "electrical ≈ heat" assumption.
 
 **Alternative considered**: a single fused "thermal storage with electric input" primitive —
 rejected by the resolved decision (less uniform with Room, no real DHW comfort state).
@@ -72,6 +76,13 @@ adds power 1:1 as heat); without `room_id` it is just a bounded load.
 
 **Rationale**: Preserves the existing `room → heaters` wiring exactly while expressing it as a
 converter into a thermal node. Edge case (no `room_id`) is the degenerate-but-valid sink.
+
+**Symmetry (HeatPump)**: The same conditional applies to `HeatPump → converter(elec→thermal
+[room_id]) | sink(elec) if no room_id`. The scenario heat pumps (`heat_pump.json`, used by
+`heat_pump_shift` and `full_house`) carry **no `room_id`**, so today they are plain sinks via
+`_get_power_bounds`. Without this degenerate rule a no-`room_id` HeatPump would compile to a
+converter pointing at a non-existent node and either error or silently drop power — breaking
+parity. With it, those heat pumps stay parity-preserving plain loads.
 
 ## D5 — Constraint targets resolve to primitive state vars/flows via a small dispatch on Primitive
 
@@ -121,6 +132,44 @@ returns a list and lives alongside `to_components()`.
 
 **Migration note**: Update `manifest/__init__.py` `__all__` and `schema_export.py`; the
 branding/schema audits and any snapshot of the exported schema must be regenerated.
+
+## D8 — Golden parity is per-device, with a closed enumerated divergence allowlist
+
+**Decision**: FR-006 is evaluated **per device**, not per whole scenario. A device whose
+component mapping reproduces its pre-refactor solver treatment must match its golden per-slot
+power within tolerance. A small, **closed, enumerated** set of devices is *expected* to
+diverge because the refactor gives them a state variable they lacked, so a constraint they
+already declared finally binds — these are excluded from golden parity and validated by US3
+correctness tests instead. Empirically confirmed against the T001 golden, the set is:
+
+| Device · scenario | Pre-refactor (golden) | Post-refactor | Cause | Validated by |
+|---|---|---|---|---|
+| `dhw` · `water_heater_legionella`, `full_house` | 0 power (sink, no temp var → `reach_min_temp_once` dropped) | heats to 60 °C | D3 DHW node+storage | DHW reaches 60 °C by deadline |
+| `ev_charger_garage` · `onboarding` | 0 power (sink, no SoC var → `min_soc_until` dropped) | charges to 80 % SoC | D5/FR-002 EV→storage | EV reaches target SoC by deadline |
+| `ev_charger_garage` `min_energy_until` · `control_class_mix`, `full_house` | 30 / 25 kWh (sink + flow) | **at-risk** — storage η may shift kWh | EV sink→storage | Phase 3 empirical: parity if unchanged, else allowlist + justify |
+
+**Rationale**: The original "byte-parity on all 7 scenarios" (FR-006 v1) is **logically
+incompatible** with FR-002 (WaterHeater gains a thermal node) and US3 (`min_soc_until` on an
+EV must work) — the very features the spec exists to deliver. Capturing the golden (T001)
+made this concrete: the diverging devices plan *nothing* today because the oracle has no
+state var to hang their constraint on. Making the oracle honor a constraint it *silently
+dropped* does not "break the oracle" (Constitution IV) — the oracle never produced those
+plans; it produced no plan. So the honest gate is: preserve every plan the oracle actually
+made (per-device parity), and prove the new behavior is correct (US3 tests), with the
+divergence set closed and justified so it cannot become a licence for unflagged regressions.
+
+**Alternatives considered**:
+- *Re-scope parity to purely-electrical scenarios only* — rejected: coarser oracle coverage,
+  loses per-device granularity in mixed scenarios like `full_house` (its battery/EV must
+  still be pinned even though its `dhw` diverges).
+- *Re-capture the golden after the refactor* — rejected: makes parity vacuous (always
+  passes), abandoning the oracle.
+- *Keep FR-006 v1 and suppress the DHW/EV state to force zero* — rejected: defeats FR-002/US3.
+
+**Implication for tests**: `test_solver_parity.py` (T015) asserts per-device parity for all
+devices minus the allowlist, asserts the allowlisted devices honor their constraint, and
+**fails on any unlisted divergence**. The captured golden stays frozen as the honest
+pre-state.
 
 ## Open questions deferred (not blocking)
 

@@ -73,9 +73,15 @@ emit one `PlanMessage`).
 | `Battery` | `StorageSpec(bus=elec, cap, η, min/max from pct, charge_only=False)` |
 | `EVCharger` | `StorageSpec(bus=elec, charge_only=True, deadline-aware via constraints)` |
 | `Room` | `NodeSpec(quantity=thermal, thermal_mass, ua, ambient=outdoor_temp, comfort_band, initial)` |
-| `HeatPump` | `ConverterSpec(elec → thermal:<room_id>, factor_map=cop_map, factor_ctx=outdoor_temp)` |
+| `HeatPump` | `ConverterSpec(elec → thermal:<room_id>, factor_map=cop_map, factor_ctx=outdoor_temp)` **iff `room_id`**, else `SinkSpec(elec)` (degenerate, mirrors ThermostatLoad — see research D4 symmetry; the scenario HPs have no `room_id` and stay sinks) |
 | `ThermostatLoad` | `ConverterSpec(elec → thermal:<room_id>, factor_map=[(_,1.0)])` **iff `room_id`**, else `SinkSpec(elec)` (D4) |
 | `WaterHeater` | `NodeSpec(quantity=thermal, DHW)` + `ConverterSpec(elec → thermal:<dhw>, η=1)` + `StorageSpec(node=<dhw>, leakage=standby_loss)` (D3) |
+
+> **Parity note (research D8)**: `EVCharger → storage` and `WaterHeater → node+storage` give
+> the EV a SoC `level` and the tank a thermal state these devices lacked pre-refactor, so a
+> `min_soc_until` / `reach_min_temp_once` they already declared now *binds* instead of being
+> silently dropped. Those devices are the FR-006 **intended divergence set** — validated by
+> US3 correctness tests, not golden parity. All other mappings are behavior-preserving.
 
 ## Relationships
 

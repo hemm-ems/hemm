@@ -53,6 +53,22 @@ SCENARIOS = (
     "water_heater_legionella",
 )
 
+# FR-006 / research D8 — the closed, justified set of (scenario, device_id) pairs
+# expected to DIVERGE from the golden post-refactor, because the refactor gives the
+# device a state var it lacked so a constraint it already declared finally binds. These
+# are excluded from golden parity and validated by US3 correctness tests (T022). Any
+# divergence NOT in this set is a regression. Used by T015 (Phase 3) — keep in sync with
+# spec FR-006. The at-risk EV min_energy_until cases (control_class_mix/full_house) are
+# NOT pre-listed: confirm empirically in Phase 3 and add here with justification only if
+# they actually diverge.
+DIVERGENCE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("water_heater_legionella", "dhw"),  # WaterHeater→node: reach_min_temp_once now binds
+        ("full_house", "dhw"),  # same, within the mixed scenario
+        ("onboarding", "ev_charger_garage"),  # EVCharger→storage: min_soc_until now binds
+    }
+)
+
 
 def _price_params(scenario: Scenario) -> dict[str, Any]:
     """Mirror SimRunner._price_params — pass through the supported price knobs."""
