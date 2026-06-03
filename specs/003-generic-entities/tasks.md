@@ -25,9 +25,9 @@ result is uncertain, run **`/code-review` or a Codex review pass**. See memory
 
 **Purpose**: Capture the parity oracle BEFORE any code changes, and stand up test scaffolding.
 
-- [ ] T001 Capture the pre-refactor Backend A golden baseline (objective value + per-slot power per device) for all 7 `testdata/scenarios/*.yaml`, committed as fixtures under `testdata/golden/003_backend_a/<scenario>.json`. **Must run before any solver edit** — it is the only parity reference (plan risk note).
-- [ ] T002 [P] Add a parity helper (load golden, compare objective within `rel ≤ 1e-9` and per-slot power within `abs ≤ 1e-6`) in `tests/_parity.py`.
-- [ ] T003 [P] Create empty test modules `tests/test_components.py`, `tests/test_solver_parity.py`, `tests/test_constraints_generic.py`; confirm the `req` marker is registered in `pyproject.toml`.
+- [X] T001 Capture the pre-refactor Backend A golden baseline (objective value + per-slot power per device) for all 7 `testdata/scenarios/*.yaml`, committed as fixtures under `testdata/golden/003_backend_a/<scenario>.json`. **Must run before any solver edit** — it is the only parity reference (plan risk note). _Captured via `tools/capture_golden_003.py` at the pinned instant `CANONICAL_NOW=2026-05-07T00:00Z` (all scenario deadlines inside the 24h horizon); all 7 solve `optimal`, deterministic on re-run._
+- [X] T002 [P] Add a parity helper (load golden, compare objective within `rel ≤ 1e-9` and per-slot power within `abs ≤ 1e-6`) in `tests/_parity.py`. _Also hosts the canonical deterministic `solve_scenario()` shared by capture + parity._
+- [X] T003 [P] Create empty test modules `tests/test_components.py`, `tests/test_solver_parity.py`, `tests/test_constraints_generic.py`; confirm the `req` marker is registered in `pyproject.toml`. _`req` marker present at `pyproject.toml` line 94._
 
 ---
 
