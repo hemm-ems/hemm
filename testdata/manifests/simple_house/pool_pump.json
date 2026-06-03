@@ -1,0 +1,12 @@
+{
+  "type": "pool_pump",
+  "device_id": "pool_pump",
+  "name": "Pool Pump",
+  "max_power_kw": 1.2,
+  "constraint_endpoints": {},
+  "actions": {},
+  "safe_default": {
+    "script": "script.pool_pump_off",
+    "description": "Stop the pool pump"
+  }
+}

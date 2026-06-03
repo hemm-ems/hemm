@@ -22,6 +22,7 @@ from hemm_core.manifest.types import (
     ManifestType,
     PVForecastManifest,
     PassiveLoadManifest,
+    PoolPumpManifest,
     Primitive,
     RoomManifest,
     ThermostatLoadManifest,
@@ -141,6 +142,15 @@ class TestToComponents:
                     device_id="base1",
                     name="Base Load",
                     typical_daily_kwh=12.0,
+                    safe_default=_safe_default(),
+                ),
+                {Primitive.SINK},
+            ),
+            (
+                PoolPumpManifest(
+                    device_id="pool1",
+                    name="Pool Pump",
+                    max_power_kw=1.2,
                     safe_default=_safe_default(),
                 ),
                 {Primitive.SINK},

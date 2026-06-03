@@ -37,6 +37,7 @@ class TestSchemaExport:
             "pv_forecast",
             "ev_charger",
             "passive_load",
+            "pool_pump",
         ]:
             schema = get_manifest_schema(t)
             assert "properties" in schema
@@ -64,15 +65,15 @@ class TestSchemaExport:
     @pytest.mark.unit
     def test_get_all_schemas(self) -> None:
         schemas = get_all_schemas()
-        # 8 manifests + 7 constraints + 4 messages = 19
-        assert len(schemas) == 19
+        # 9 manifests + 7 constraints + 4 messages = 20
+        assert len(schemas) == 20
 
     @pytest.mark.unit
     def test_export_schemas_json_valid(self) -> None:
         result = export_schemas_json()
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
-        assert len(parsed) == 19
+        assert len(parsed) == 20
 
 
 class TestCLISchema:
@@ -84,7 +85,7 @@ class TestCLISchema:
         assert ret == 0
         output = capsys.readouterr().out
         parsed = json.loads(output)
-        assert len(parsed) == 19
+        assert len(parsed) == 20
 
     @pytest.mark.unit
     def test_schema_specific_type(self, capsys: pytest.CaptureFixture[str]) -> None:

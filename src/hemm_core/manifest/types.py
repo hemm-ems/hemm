@@ -32,6 +32,7 @@ class ManifestType(StrEnum):
     PV_FORECAST = "pv_forecast"
     EV_CHARGER = "ev_charger"
     PASSIVE_LOAD = "passive_load"
+    POOL_PUMP = "pool_pump"
 
     @property
     def primitives(self) -> tuple[Primitive, ...]:
@@ -48,6 +49,7 @@ _TYPE_PRIMITIVES: dict[ManifestType, tuple[Primitive, ...]] = {
     ManifestType.PV_FORECAST: (Primitive.SOURCE,),
     ManifestType.EV_CHARGER: (Primitive.STORAGE,),
     ManifestType.PASSIVE_LOAD: (Primitive.SINK,),
+    ManifestType.POOL_PUMP: (Primitive.SINK,),
 }
 
 
@@ -384,6 +386,24 @@ class PassiveLoadManifest(_ManifestBase):
         ]
 
 
+class PoolPumpManifest(_ManifestBase):
+    """Pool pump manifest — steerable electrical circulation pump."""
+
+    type: ManifestType = ManifestType.POOL_PUMP
+    max_power_kw: float = Field(gt=0, description="Maximum motor power draw in kW")
+
+    def to_components(self) -> list[ComponentSpec]:
+        return [
+            SinkSpec(
+                device_id=self.device_id,
+                bus="elec",
+                min_power_kw=0.0,
+                max_power_kw=self.max_power_kw,
+                controllable=True,
+            )
+        ]
+
+
 # Discriminated union of all manifest types
 DeviceManifest = Annotated[
     RoomManifest
@@ -393,6 +413,7 @@ DeviceManifest = Annotated[
     | BatteryManifest
     | PVForecastManifest
     | EVChargerManifest
-    | PassiveLoadManifest,
+    | PassiveLoadManifest
+    | PoolPumpManifest,
     Field(discriminator="type"),
 ]

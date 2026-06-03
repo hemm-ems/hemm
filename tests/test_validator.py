@@ -61,6 +61,20 @@ class TestValidatorBasics:
         )
         assert manifest.device_id == "bat1"
 
+    @pytest.mark.unit
+    @pytest.mark.req("003:FR-012")
+    def test_valid_pool_pump(self) -> None:
+        manifest = validate_manifest(
+            {
+                "type": "pool_pump",
+                "device_id": "pool_pump_1",
+                "name": "Pool Pump",
+                "max_power_kw": 1.2,
+                "safe_default": {"script": "script.pool_pump_safe"},
+            }
+        )
+        assert manifest.device_id == "pool_pump_1"
+
 
 @pytest.mark.req("001:FR-007")
 class TestConstraintEndpointValidation:
