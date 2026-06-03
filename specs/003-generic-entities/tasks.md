@@ -79,7 +79,7 @@ shows 0 changed lines in the two solver files.
 **Depends on**: Phase 3 (Backend A must build generically before a new type can plan code-free).
 
 - [X] T017 [P] [US1] Add a `pool_pump` manifest (controllable electrical `sink`, with `safe_default`) and its `to_components()` mapping — `testdata/manifests/pool_pump.yaml` + a scenario including it. [FR-003, FR-012]
-- [ ] T018 [US1] Integration test: pool_pump plans end-to-end through an HA replan and gets a `sensor.hemm_*` plan; a `forbidden_window` zeroes its `on` across the window — `ha-hemm/tests/integration/test_pool_pump_thesis.py`. `# REQ: 003:FR-012`
+- [X] T018 [US1] Integration test: pool_pump plans end-to-end through an HA replan and gets a `sensor.hemm_*` plan; a `forbidden_window` zeroes its `on` across the window — `ha-hemm/tests/integration/test_pool_pump_thesis.py`. `# REQ: 003:FR-012`
 - [X] T019 [US1] Diff guard (CI/unit): assert the pool_pump addition changes **0 lines** in `src/hemm_core/solvers/milp_central.py` and `solvers/consumers.py` (SC-001, SC-006). `# REQ: 003:FR-003`
 
 **Checkpoint**: thesis proven — new device type, zero solver code.
