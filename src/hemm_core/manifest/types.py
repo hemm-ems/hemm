@@ -303,6 +303,8 @@ class BatteryManifest(_ManifestBase):
             StorageSpec(
                 device_id=self.device_id,
                 capacity=self.capacity_kwh,
+                max_charge_kw=self.max_charge_kw,
+                max_discharge_kw=self.max_discharge_kw,
                 charge_efficiency=self.charge_efficiency,
                 discharge_efficiency=self.discharge_efficiency,
                 min_level=self.capacity_kwh * self.min_soc_pct / 100.0,
@@ -349,6 +351,7 @@ class EVChargerManifest(_ManifestBase):
             StorageSpec(
                 device_id=self.device_id,
                 capacity=self.battery_capacity_kwh,
+                max_charge_kw=self.max_charge_kw,
                 charge_only=True,
                 max_level=self.battery_capacity_kwh,
                 min_level=0.0,

@@ -194,9 +194,10 @@ migration; assert average `cost_gap_pct < 3%` and per-scenario comfort/stability
     gives it a thermal state, so `reach_min_temp_once` (60 °C) now binds (research D3).
   - `ev_charger_garage` in `onboarding` — EVCharger → `storage` gives it a SoC `level`, so
     `min_soc_until` (80 %) now binds (research D5/US3).
-  - *(at-risk, confirm empirically in Phase 3)* `ev_charger_garage`'s `min_energy_until` in
-    `control_class_mix` and `full_house`: the sink→storage remap must reproduce the same kWh
-    delivery; if charge-efficiency perturbs it, the device joins this list with justification.
+  - `ev_charger_garage`'s `min_energy_until` in `control_class_mix` and `full_house` —
+    empirically confirmed in Phase 3: the same required kWh is delivered, but the
+    storage-level recursion changes an adjacent-slot tie-break, so the per-slot golden
+    differs without changing the device's constraint satisfaction.
 
   Any device that diverges from its golden and is **not** in this enumerated set is a
   regression and MUST fail the gate. (*Constitution IV: the oracle's existing plans are never

@@ -243,6 +243,7 @@ class TestScenarioComponents:
                     assert component.output_bus
 
 
+@pytest.mark.req("003:FR-007")
 class TestConverterSpec:
     """Converter factor interpolation tests."""
 

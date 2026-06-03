@@ -64,6 +64,8 @@ class StorageSpec(ComponentSpec):
 
     primitive: Literal[Primitive.STORAGE] = Primitive.STORAGE
     capacity: float | None
+    max_charge_kw: float | None = None
+    max_discharge_kw: float = 0.0
     charge_efficiency: float = 1.0
     discharge_efficiency: float = 1.0
     min_level: float = 0.0
