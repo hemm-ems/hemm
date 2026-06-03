@@ -21,15 +21,15 @@ manifests:
 
 constraint_windows:
   - window_id: ev_departure_target
-    device_id: ev_charger
+    device_id: ev_charger_garage
     deadline: "2026-05-07T07:00:00+00:00"
     requirement:
       type: min_energy_until
       min_energy_kwh: 30.0
     priority_penalty: 8.0
   - window_id: ev_quiet_hours
-    device_id: ev_charger
-    deadline: "2026-05-07T05:00:00+00:00"
+    device_id: ev_charger_garage
+    deadline: "2026-05-07T04:00:00+00:00"
     requirement:
       type: forbidden_window
     priority_penalty: 1.0

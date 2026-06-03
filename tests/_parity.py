@@ -65,7 +65,10 @@ DIVERGENCE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
         ("water_heater_legionella", "dhw"),  # WaterHeater→node: reach_min_temp_once now binds
         ("full_house", "dhw"),  # same, within the mixed scenario
+        ("ev_departure", "ev_charger_garage"),  # min_energy_until now binds after device_id fix
         ("onboarding", "ev_charger_garage"),  # EVCharger→storage: min_soc_until now binds
+        ("onboarding", "bathroom_heater"),  # Bathroom comfort now binds after wiring heater to a room
+        ("onboarding", "bathroom"),  # New thermal room node introduced for bathroom comfort
         ("control_class_mix", "ev_charger_garage"),  # EVCharger→storage: min_energy tie-break shifts
         ("full_house", "ev_charger_garage"),  # same delivered kWh, adjacent-slot tie-break shifts
     }

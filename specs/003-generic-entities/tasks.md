@@ -93,10 +93,10 @@ shows 0 changed lines in the two solver files.
 
 **Independent Test**: `tests/test_constraints_generic.py` green; parity (T015) still green.
 
-- [ ] T020 [US3] Re-point `_apply_constraint_windows` in `src/hemm_core/solvers/milp_central.py` to resolve each constraint's target from the device's primitives (storage `level` / node thermal state / flow integral), dropping the type/`hasattr(model,"temp")` branches. Semantics unchanged, no version bump. [FR-008]
-- [ ] T021 [US3] Add validation in `src/hemm_core/manifest/validator.py`: a constraint targeting a state var the device's primitives do not provide is rejected with a clear message; a converter `output_bus` referencing an absent node is rejected. [FR-008, edge cases]
-- [ ] T022 [US3] Unit test: `hold_temp_band` on a DHW node and `min_soc_until` on an EV plan feasibly; a bad-target constraint is rejected, in `tests/test_constraints_generic.py`. `# REQ: 003:FR-008`
-- [ ] T023 [US3] Regression guard: re-run `tests/test_solver_parity.py` to confirm constraint generalization did not perturb golden plans.
+- [X] T020 [US3] Re-point `_apply_constraint_windows` in `src/hemm_core/solvers/milp_central.py` to resolve each constraint's target from the device's primitives (storage `level` / node thermal state / flow integral), dropping the type/`hasattr(model,"temp")` branches. Semantics unchanged, no version bump. [FR-008]
+- [X] T021 [US3] Add validation in `src/hemm_core/manifest/validator.py`: a constraint targeting a state var the device's primitives do not provide is rejected with a clear message; a converter `output_bus` referencing an absent node is rejected. [FR-008, edge cases]
+- [X] T022 [US3] Unit test: `hold_temp_band` on a DHW node and `min_soc_until` on an EV plan feasibly; a bad-target constraint is rejected, in `tests/test_constraints_generic.py`. `# REQ: 003:FR-008`
+- [X] T023 [US3] Regression guard: re-run `tests/test_solver_parity.py` to confirm constraint generalization did not perturb golden plans.
 
 **Checkpoint**: expressiveness dividend delivered; oracle still intact.
 

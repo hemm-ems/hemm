@@ -6,7 +6,15 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from hemm_core.manifest.constraints import CONSTRAINT_VERSIONS, ConstraintType
+from hemm_core.manifest.components import ComponentSpec, ConverterSpec, NodeSpec, StorageSpec
+from hemm_core.manifest.constraints import (
+    CONSTRAINT_VERSIONS,
+    ConstraintType,
+    HoldTempBand,
+    MinSocUntil,
+    ReachMinTempOnce,
+)
+from hemm_core.manifest.messages import ConstraintWindow
 from hemm_core.manifest.types import (
     BatteryManifest,
     DeviceManifest,
@@ -115,4 +123,70 @@ def _validate_constraint_endpoints(endpoints: dict[str, str]) -> list[str]:
                 f"but current vocabulary provides v{current_version}."
             )
 
+    return errors
+
+
+def validate_constraint_targets(
+    manifests: list[DeviceManifest],
+    constraint_windows: list[ConstraintWindow],
+) -> None:
+    """Validate that constraint windows target primitive state vars that exist."""
+    components_by_device = {manifest.device_id: list(manifest.to_components()) for manifest in manifests}
+    components = [component for device_components in components_by_device.values() for component in device_components]
+
+    errors: list[str] = []
+    errors.extend(_validate_converter_output_buses(components))
+
+    state_vars_by_device = _state_vars_by_device(components_by_device)
+    for cw in constraint_windows:
+        state_vars = state_vars_by_device.get(cw.device_id)
+        if state_vars is None:
+            errors.append(
+                f"Constraint window '{cw.window_id}' targets unknown device '{cw.device_id}' "
+                f"for requirement '{cw.requirement.type}'."
+            )
+            continue
+
+        missing = _missing_capability(cw)
+        if missing is not None and missing[0] not in state_vars:
+            _, capability = missing
+            errors.append(
+                f"Device '{cw.device_id}' cannot satisfy requirement '{cw.requirement.type}': "
+                f"missing primitive capability '{capability}'."
+            )
+
+    if errors:
+        raise ValidationError(errors)
+
+
+def _state_vars_by_device(components_by_device: dict[str, list[ComponentSpec]]) -> dict[str, set[str]]:
+    state_vars: dict[str, set[str]] = {}
+    for device_id, components in components_by_device.items():
+        device_vars = {"power", "on"}
+        if any(isinstance(component, StorageSpec) and component.capacity is not None for component in components):
+            device_vars.add("level")
+        if any(isinstance(component, NodeSpec) and component.quantity == "thermal" for component in components):
+            device_vars.add("temp")
+        state_vars[device_id] = device_vars
+    return state_vars
+
+
+def _missing_capability(cw: ConstraintWindow) -> tuple[str, str] | None:
+    req = cw.requirement
+    if isinstance(req, MinSocUntil):
+        return ("level", "storage level")
+    if isinstance(req, (HoldTempBand, ReachMinTempOnce)):
+        return ("temp", "thermal node temperature")
+    return None
+
+
+def _validate_converter_output_buses(components: list[ComponentSpec]) -> list[str]:
+    node_buses = {component.bus for component in components if isinstance(component, NodeSpec)}
+    errors: list[str] = []
+    for component in components:
+        if isinstance(component, ConverterSpec) and component.output_bus not in node_buses:
+            errors.append(
+                f"Converter '{component.device_id}' output_bus '{component.output_bus}' "
+                "does not reference a compiled node."
+            )
     return errors

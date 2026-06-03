@@ -31,6 +31,7 @@ from hemm_core.manifest.constraints import (
     ReachMinTempOnce,
 )
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
+from hemm_core.manifest.validator import validate_constraint_targets
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
 from hemm_core.time import Clock, WallClock
 
@@ -98,6 +99,8 @@ class MILPCentralSolver:
         if n_slots <= 0:
             return SolverResult(status=SolverStatus.ERROR, diagnostics={"error": "Invalid horizon/resolution"})
 
+        validate_constraint_targets(manifests, constraint_windows)
+
         # Extend or truncate price forecast to match slots
         prices = self._align_prices(price_forecast, n_slots, resolution_minutes)
 
@@ -117,11 +120,15 @@ class MILPCentralSolver:
         components_by_device: dict[str, list[ComponentSpec]] = {
             manifest.device_id: list(manifest.to_components()) for manifest in manifests
         }
-        components = [component for device_components in components_by_device.values() for component in device_components]
+        components = [
+            component for device_components in components_by_device.values() for component in device_components
+        ]
         storage_components = {
             component.device_id: component for component in components if isinstance(component, StorageSpec)
         }
-        node_components = {component.device_id: component for component in components if isinstance(component, NodeSpec)}
+        node_components = {
+            component.device_id: component for component in components if isinstance(component, NodeSpec)
+        }
 
         # Decision variables: power per device per time slot
         model.power = pyo.Var(model.D, model.T, domain=pyo.Reals)
@@ -170,7 +177,6 @@ class MILPCentralSolver:
             constraint_windows,
             components_by_device,
             storage_components,
-            node_components,
             t0,
             n_slots,
             resolution_minutes,
@@ -395,7 +401,6 @@ class MILPCentralSolver:
         constraint_windows: list[ConstraintWindow],
         components_by_device: dict[str, list[ComponentSpec]],
         storage_components: dict[str, StorageSpec],
-        node_components: dict[str, NodeSpec],
         t0: datetime,
         n_slots: int,
         resolution_minutes: int,
@@ -405,6 +410,7 @@ class MILPCentralSolver:
         """Apply constraint windows to the Pyomo model."""
         if thermal_penalty_terms is None:
             thermal_penalty_terms = []
+        state_vars_by_device = self._state_vars_by_device(components_by_device)
 
         for cw in constraint_windows:
             if cw.device_id not in components_by_device:
@@ -420,8 +426,9 @@ class MILPCentralSolver:
 
             elif isinstance(req, MinSocUntil):
                 # Storage level must be >= target by deadline.
-                storage = storage_components.get(cw.device_id)
-                if storage is not None and storage.capacity is not None and hasattr(model, "soc"):
+                if "level" in state_vars_by_device[cw.device_id]:
+                    storage = storage_components[cw.device_id]
+                    assert storage.capacity is not None
                     target_kwh = storage.capacity * req.min_soc_pct / 100.0
                     if deadline_slot < n_slots:
                         model.constraint_windows.add(model.soc[cw.device_id, deadline_slot + 1] >= target_kwh)
@@ -440,7 +447,7 @@ class MILPCentralSolver:
                 # Linearised via big-M: T[t] - target >= -M*(1 - reached[t])
                 # At least one reached[t] == 1 up to deadline.
                 node_id = cw.device_id
-                if node_id in node_components and hasattr(model, "temp"):
+                if "temp" in state_vars_by_device[node_id]:
                     target = req.target_temp_c
                     reached_vars: list[Any] = []
                     for t in range(min(deadline_slot + 1, n_slots) + 1):
@@ -455,7 +462,7 @@ class MILPCentralSolver:
                 # Soft comfort band: T[room, t] in [min_temp, max_temp]
                 # with slack variables penalised in the objective.
                 node_id = cw.device_id
-                if node_id in node_components and hasattr(model, "temp"):
+                if "temp" in state_vars_by_device[node_id]:
                     for t in range(min(deadline_slot + 1, n_slots) + 1):
                         s_lo = model.thermal_slack_lo.add()
                         s_hi = model.thermal_slack_hi.add()
@@ -473,6 +480,19 @@ class MILPCentralSolver:
             elif isinstance(req, MaxRuntimePerDay):
                 max_slots = int(req.max_hours * 60 / resolution_minutes)
                 model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in model.T) <= max_slots)
+
+    @staticmethod
+    def _state_vars_by_device(components_by_device: dict[str, list[ComponentSpec]]) -> dict[str, set[str]]:
+        """Map each device to primitive-backed state/flow vars available to constraints."""
+        state_vars: dict[str, set[str]] = {}
+        for device_id, components in components_by_device.items():
+            device_vars = {"power", "on"}
+            if any(isinstance(component, StorageSpec) and component.capacity is not None for component in components):
+                device_vars.add("level")
+            if any(isinstance(component, NodeSpec) and component.quantity == "thermal" for component in components):
+                device_vars.add("temp")
+            state_vars[device_id] = device_vars
+        return state_vars
 
     def _time_to_slot(self, dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
         """Convert a datetime to a slot index."""
