@@ -118,9 +118,9 @@ comfort ≤ A, stability ≤ 1.5×.
 
 ## Phase 7: Polish & cross-cutting
 
-- [ ] T026 [P] Add primitive/component metadata to `src/hemm_core/manifest/schema_export.py` and `validator.py` — additive only; older manifests gain no required field. [FR-010]
+- [X] T026 [P] Add primitive/component metadata to `src/hemm_core/manifest/schema_export.py` and `validator.py` — additive only; older manifests gain no required field. [FR-010]
 - [ ] T027 [P] Integration test: exported schema includes the primitive metadata and existing manifests validate unchanged — `ha-hemm/tests/integration/test_schema_primitives.py`. `# REQ: 003:FR-010`
-- [ ] T028 [P] Regenerate the exported JSON-schema snapshot and run the branding/schema audits for the `DeviceRole`→`Primitive` rename.
+- [X] T028 [P] Regenerate the exported JSON-schema snapshot and run the branding/schema audits for the `DeviceRole`→`Primitive` rename.
 - [ ] T029 Flip `specs/003-generic-entities/spec.md` FR statuses `⬜`→`✅` as their tests land; regenerate `python3 tools/req_coverage.py --markdown specs/coverage.md` and confirm `--check` / `make gate` green (needs `../ha-hemm`).
 - [ ] T030 [P] Cartographer re-map (`make remap`) and add a component-model note to `docs/solver-decision.md`.
 - [ ] T031 Run `quickstart.md` end-to-end as the final acceptance pass.

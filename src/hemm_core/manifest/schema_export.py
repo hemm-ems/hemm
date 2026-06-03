@@ -20,6 +20,7 @@ from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
+    ManifestType,
     PassiveLoadManifest,
     PoolPumpManifest,
     PVForecastManifest,
@@ -58,13 +59,19 @@ _MESSAGE_SCHEMAS: dict[str, type[Any]] = {
 }
 
 
+def _schema_with_primitives(manifest_type: str, model: type[Any]) -> dict[str, Any]:
+    schema: dict[str, Any] = model.model_json_schema()
+    schema["x-hemm-primitives"] = [primitive.value for primitive in ManifestType(manifest_type).primitives]
+    return schema
+
+
 def get_manifest_schema(manifest_type: str) -> dict[str, Any]:
     """Get JSON Schema for a specific manifest type."""
     if manifest_type not in _MANIFEST_SCHEMAS:
         available = ", ".join(_MANIFEST_SCHEMAS)
         msg = f"Unknown manifest type '{manifest_type}'. Available: {available}"
         raise ValueError(msg)
-    result: dict[str, Any] = _MANIFEST_SCHEMAS[manifest_type].model_json_schema()
+    result = _schema_with_primitives(manifest_type, _MANIFEST_SCHEMAS[manifest_type])
     return result
 
 
@@ -92,7 +99,7 @@ def get_all_schemas() -> dict[str, dict[str, Any]]:
     """Get all schemas as a dict keyed by name."""
     schemas: dict[str, dict[str, Any]] = {}
     for name, model in _MANIFEST_SCHEMAS.items():
-        schemas[f"manifest/{name}"] = model.model_json_schema()
+        schemas[f"manifest/{name}"] = _schema_with_primitives(name, model)
     for name, model in _CONSTRAINT_SCHEMAS.items():
         schemas[f"constraint/{name}"] = model.model_json_schema()
     for name, model in _MESSAGE_SCHEMAS.items():

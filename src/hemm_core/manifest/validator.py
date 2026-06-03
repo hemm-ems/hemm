@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from hemm_core.manifest.components import ComponentSpec, ConverterSpec, NodeSpec, StorageSpec
+from hemm_core.manifest.components import ComponentSpec, ConverterSpec, NodeSpec, Primitive, StorageSpec
 from hemm_core.manifest.constraints import (
     CONSTRAINT_VERSIONS,
     ConstraintType,
@@ -50,6 +50,16 @@ _TYPE_TO_MODEL: dict[str, type[Any]] = {
     ManifestType.PASSIVE_LOAD: PassiveLoadManifest,
     ManifestType.POOL_PUMP: PoolPumpManifest,
 }
+
+
+def primitives_for_type(manifest_type: str | ManifestType) -> tuple[Primitive, ...]:
+    """Return the solver primitives compiled by a manifest type."""
+    try:
+        resolved_type = ManifestType(manifest_type)
+    except ValueError as e:
+        msg = f"Unknown manifest type '{manifest_type}'. Must be one of: " + ", ".join(t.value for t in ManifestType)
+        raise ValidationError([msg]) from e
+    return resolved_type.primitives
 
 
 def validate_manifest(data: dict[str, Any]) -> DeviceManifest:
