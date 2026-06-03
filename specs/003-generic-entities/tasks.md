@@ -109,8 +109,8 @@ shows 0 changed lines in the two solver files.
 **Independent Test**: `ABComparisonRunner` over all scenarios — avg `cost_gap_pct < 3%`,
 comfort ≤ A, stability ≤ 1.5×.
 
-- [ ] T024 [US4] Replace the `ConsumerModel` subclass factory (`get_consumer_model`) in `src/hemm_core/solvers/consumers.py` with component-driven local price response (storage→arbitrage/deadline, converter→factor-weighted price, sink→cheapest-slots, source→forecast). [FR-009]
-- [ ] T025 [US4] A/B gate test: avg `cost_gap_pct < 3%`, per-scenario comfort ≤ A, plan-stability ≤ 1.5×, in `tests/test_comparison.py`. `# REQ: 003:FR-009`
+- [X] T024 [US4] Replace the `ConsumerModel` subclass factory (`get_consumer_model`) in `src/hemm_core/solvers/consumers.py` with component-driven local price response (storage→arbitrage/deadline, converter→factor-weighted price, sink→cheapest-slots, source→forecast). [FR-009]
+- [X] T025 [US4] A/B gate test: avg `cost_gap_pct < 3%`, per-scenario comfort ≤ A, plan-stability ≤ 1.5×, in `tests/test_comparison.py`. `# REQ: 003:FR-009`
 
 **Checkpoint**: both backends share the component contract; B within kill criteria.
 

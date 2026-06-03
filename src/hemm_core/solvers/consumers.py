@@ -1,44 +1,29 @@
-"""Consumer models — realistic device response models for both solver backends.
-
-Each consumer model encapsulates the local optimization logic for a device type.
-Given price signals, a consumer decides its optimal power schedule subject to
-its physical constraints.
-"""
+"""Primitive-driven local price response for Backend B."""
 
 from __future__ import annotations
 
-import math
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
+from hemm_core.manifest.components import ComponentSpec, ConverterSpec, Primitive, SinkSpec, SourceSpec, StorageSpec
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
+    HoldTempBand,
     MaxRuntimePerDay,
     MinEnergyUntil,
     MinRuntimePerDay,
     MinSocUntil,
+    ReachMinTempOnce,
 )
 from hemm_core.manifest.messages import ConstraintWindow
-from hemm_core.manifest.types import (
-    BatteryManifest,
-    EVChargerManifest,
-    HeatPumpManifest,
-    ManifestType,
-    PassiveLoadManifest,
-    PVForecastManifest,
-    RoomManifest,
-    ThermostatLoadManifest,
-    WaterHeaterManifest,
-)
+
+_DEFAULT_STATE_FRACTION = 0.5
+_DEFAULT_THERMAL_INITIAL_C = 20.0
 
 
 class ConsumerModel(ABC):
-    """Abstract base class for consumer models.
-
-    A consumer model responds to price signals by computing an optimal
-    power schedule subject to its physical and operational constraints.
-    """
+    """Abstract base class for local primitive response models."""
 
     @property
     @abstractmethod
@@ -48,8 +33,8 @@ class ConsumerModel(ABC):
 
     @property
     @abstractmethod
-    def device_type(self) -> ManifestType:
-        """Device type."""
+    def device_type(self) -> Any:
+        """Manifest type value."""
         ...
 
     @abstractmethod
@@ -63,36 +48,84 @@ class ConsumerModel(ABC):
         previous_power: list[float] | None = None,
         plan_change_penalty: float = 0.0,
     ) -> list[float]:
-        """Compute optimal power schedule given prices.
-
-        Args:
-            prices: Effective price per slot (€/kWh).
-            n_slots: Number of time slots.
-            resolution_minutes: Duration per slot.
-            constraints: Active constraint windows for this device.
-            t0: Start time of horizon.
-            previous_power: Previous plan power per slot (for plan-change penalty).
-            plan_change_penalty: Penalty weight for deviating from previous plan.
-
-        Returns:
-            List of power values (kW) per slot.
-        """
+        """Compute a power schedule from slot prices."""
         ...
 
 
-class BatteryConsumer(ConsumerModel):
-    """Battery consumer — charges when cheap, discharges when expensive."""
-
-    def __init__(self, manifest: BatteryManifest) -> None:
+class _PrimitiveConsumer(ConsumerModel):
+    def __init__(self, manifest: Any, component: ComponentSpec) -> None:
         self._manifest = manifest
+        self._component = component
+        self._reference_prices: list[float] | None = None
 
     @property
     def device_id(self) -> str:
-        return self._manifest.device_id
+        return self._component.device_id
 
     @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.BATTERY
+    def device_type(self) -> Any:
+        return getattr(self._manifest, "type", None)
+
+    @staticmethod
+    def _time_to_slot(dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
+        delta = dt - t0
+        slot = int(delta.total_seconds() / (resolution_minutes * 60))
+        return max(0, min(slot, n_slots - 1))
+
+    def _forbidden_slots(
+        self, constraints: list[ConstraintWindow], t0: datetime, resolution_minutes: int, n_slots: int
+    ) -> set[int]:
+        slots: set[int] = set()
+        for cw in constraints:
+            if isinstance(cw.requirement, ForbiddenWindow):
+                deadline_slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
+                slots.update(range(min(deadline_slot + 1, n_slots)))
+        return slots
+
+    def _runtime_limits(
+        self, constraints: list[ConstraintWindow], resolution_minutes: int, n_slots: int
+    ) -> tuple[int, int]:
+        minimum = 0
+        maximum = n_slots
+        for cw in constraints:
+            req = cw.requirement
+            if isinstance(req, MinRuntimePerDay):
+                minimum = max(minimum, int(req.min_hours * 60 / resolution_minutes))
+            elif isinstance(req, MaxRuntimePerDay):
+                maximum = min(maximum, int(req.max_hours * 60 / resolution_minutes))
+        return minimum, maximum
+
+    def _prices_for_decision(self, prices: list[float], n_slots: int) -> list[float]:
+        if self._reference_prices is None or len(self._reference_prices) != n_slots:
+            self._reference_prices = list(prices[:n_slots])
+        return self._reference_prices
+
+    @staticmethod
+    def _dampen(
+        powers: list[float],
+        previous_power: list[float] | None,
+        plan_change_penalty: float,
+        *,
+        clamp_nonnegative: bool = False,
+    ) -> list[float]:
+        if not previous_power or plan_change_penalty <= 0:
+            return powers
+
+        damping = 1.0 / (1.0 + plan_change_penalty * 10)
+        damped: list[float] = []
+        for t, power in enumerate(powers):
+            prev = previous_power[t] if t < len(previous_power) else 0.0
+            value = prev + (power - prev) * damping
+            damped.append(max(0.0, value) if clamp_nonnegative else value)
+        return damped
+
+
+class StorageConsumer(_PrimitiveConsumer):
+    """Storage response with arbitrage and deadline target handling."""
+
+    def __init__(self, manifest: Any, component: StorageSpec) -> None:
+        super().__init__(manifest, component)
+        self._storage = component
 
     def respond_to_prices(
         self,
@@ -104,190 +137,236 @@ class BatteryConsumer(ConsumerModel):
         previous_power: list[float] | None = None,
         plan_change_penalty: float = 0.0,
     ) -> list[float]:
-        """Battery: charge at low prices, discharge at high prices, respecting SoC limits."""
-        bat = self._manifest
+        storage = self._storage
         dt_hours = resolution_minutes / 60.0
-        cap = bat.capacity_kwh
-        min_soc = cap * bat.min_soc_pct / 100.0
-        max_soc = cap * bat.max_soc_pct / 100.0
-
-        # Check for MinSocUntil constraints
-        soc_targets: list[tuple[int, float]] = []
-        forbidden_slots: set[int] = set()
-        for cw in constraints:
-            deadline_slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
-            if isinstance(cw.requirement, MinSocUntil):
-                target_kwh = cap * cw.requirement.min_soc_pct / 100.0
-                soc_targets.append((deadline_slot, target_kwh))
-            elif isinstance(cw.requirement, ForbiddenWindow):
-                for t in range(min(deadline_slot + 1, n_slots)):
-                    forbidden_slots.add(t)
-
-        # Greedy approach: sort slots by price, charge cheapest, discharge most expensive
-        # While respecting SoC trajectory constraints
         powers = [0.0] * n_slots
-        soc = cap * 0.5  # Start at 50%
+        forbidden = self._forbidden_slots(constraints, t0, resolution_minutes, n_slots)
 
-        # Compute price median to decide charge/discharge threshold
-        sorted_prices = sorted(prices[:n_slots])
-        median_price = sorted_prices[len(sorted_prices) // 2]
+        decision_input = self._prices_for_decision(prices, n_slots)
+        max_charge = storage.max_charge_kw or 0.0
+        max_discharge = 0.0 if storage.charge_only else storage.max_discharge_kw
+        capacity = storage.capacity
+        min_level = storage.min_level
+        max_level = storage.max_level if storage.max_level is not None else capacity
+        level = capacity * _DEFAULT_STATE_FRACTION if capacity is not None else 0.0
 
-        # Forward pass: respect SoC limits and meet targets
-        soc_trajectory = [soc]
-        for t in range(n_slots):
-            if t in forbidden_slots:
-                powers[t] = 0.0
-            elif prices[t] < median_price * 0.85:
-                # Cheap: charge
-                max_charge = min(bat.max_charge_kw, (max_soc - soc) / (dt_hours * bat.charge_efficiency))
-                powers[t] = max(0.0, max_charge)
-            elif prices[t] > median_price * 1.15:
-                # Expensive: discharge
-                max_discharge = min(bat.max_discharge_kw, (soc - min_soc) / dt_hours)
-                powers[t] = -max(0.0, max_discharge)
+        target_energy, target_level, deadline_slot = self._target(constraints, t0, resolution_minutes, n_slots)
+        if storage.charge_only:
+            required_input = target_energy
+            if capacity is not None and target_level is not None:
+                deficit = max(0.0, target_level - level)
+                required_input = max(required_input, deficit / max(storage.charge_efficiency, 1e-9))
+            return self._charge_to_target(
+                powers,
+                decision_input,
+                required_input,
+                deadline_slot,
+                forbidden,
+                max_charge,
+                dt_hours,
+                previous_power,
+                plan_change_penalty,
+            )
+
+        if not decision_input or (max_charge <= 0 and max_discharge <= 0):
+            return powers
+
+        if capacity is not None and max_level is not None:
+            powers = self._arbitrage_dp(
+                decision_input,
+                n_slots,
+                dt_hours,
+                forbidden,
+                level,
+                min_level,
+                max_level,
+                max_charge,
+                max_discharge,
+            )
+
+        trajectory = [level]
+        for power in powers:
+            if power >= 0:
+                level += power * dt_hours * storage.charge_efficiency
             else:
-                powers[t] = 0.0
+                level += power * dt_hours * storage.discharge_efficiency
+            if capacity is not None:
+                upper = max_level if max_level is not None else capacity
+                level = max(min_level, min(upper, level))
+            trajectory.append(level)
 
-            # Apply plan-change penalty (reduce changes from previous)
-            if previous_power and plan_change_penalty > 0:
-                prev = previous_power[t] if t < len(previous_power) else 0.0
-                # Dampen change
-                change = powers[t] - prev
-                damping = 1.0 / (1.0 + plan_change_penalty * 10)
-                powers[t] = prev + change * damping
-
-            # Update SoC
-            if powers[t] > 0:
-                soc += powers[t] * dt_hours * bat.charge_efficiency
-            else:
-                soc += powers[t] * dt_hours  # discharge (power is negative)
-
-            # Clamp SoC
-            soc = max(min_soc, min(max_soc, soc))
-            soc_trajectory.append(soc)
-
-        # Ensure SoC targets are met (greedy correction)
-        for target_slot, target_kwh in soc_targets:
-            if target_slot < n_slots and soc_trajectory[target_slot + 1] < target_kwh:
-                deficit = target_kwh - soc_trajectory[target_slot + 1]
-                # Charge more in cheapest slots before the deadline
-                slots_before = [(prices[t], t) for t in range(target_slot + 1) if t not in forbidden_slots]
-                slots_before.sort()
-                for _, t in slots_before:
+        if capacity is not None and target_level is not None and deadline_slot < n_slots:
+            deficit = target_level - trajectory[deadline_slot + 1]
+            if deficit > 0:
+                available = [(decision_input[t], t) for t in range(deadline_slot + 1) if t not in forbidden]
+                available.sort()
+                for _, t in available:
                     if deficit <= 0:
                         break
-                    headroom = bat.max_charge_kw - max(0.0, powers[t])
-                    add_power = min(headroom, deficit / (dt_hours * bat.charge_efficiency))
-                    powers[t] += add_power
-                    deficit -= add_power * dt_hours * bat.charge_efficiency
+                    spare_kw = max(0.0, max_charge - max(0.0, powers[t]))
+                    add = min(spare_kw, deficit / (dt_hours * storage.charge_efficiency))
+                    powers[t] += add
+                    deficit -= add * dt_hours * storage.charge_efficiency
 
-        return powers
+        return self._dampen(powers, previous_power, plan_change_penalty)
 
-    @staticmethod
-    def _time_to_slot(dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
-        delta = dt - t0
-        slot = int(delta.total_seconds() / (resolution_minutes * 60))
-        return max(0, min(slot, n_slots - 1))
-
-
-class EVChargerConsumer(ConsumerModel):
-    """EV charger consumer — charges to meet deadline SoC target at cheapest slots."""
-
-    def __init__(self, manifest: EVChargerManifest) -> None:
-        self._manifest = manifest
-
-    @property
-    def device_id(self) -> str:
-        return self._manifest.device_id
-
-    @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.EV_CHARGER
-
-    def respond_to_prices(
+    def _arbitrage_dp(
         self,
         prices: list[float],
         n_slots: int,
-        resolution_minutes: int,
-        constraints: list[ConstraintWindow],
-        t0: datetime,
-        previous_power: list[float] | None = None,
-        plan_change_penalty: float = 0.0,
+        dt_hours: float,
+        forbidden: set[int],
+        initial_level: float,
+        min_level: float,
+        max_level: float,
+        max_charge: float,
+        max_discharge: float,
     ) -> list[float]:
-        """EV: charge at cheapest slots, meet energy targets by deadline."""
-        ev = self._manifest
-        dt_hours = resolution_minutes / 60.0
+        storage = self._storage
+        step = max((max_level - min_level) / 80.0, 0.05)
+        levels = [min_level + i * step for i in range(round((max_level - min_level) / step) + 1)]
+        if levels[-1] < max_level:
+            levels.append(max_level)
+        start_idx = min(range(len(levels)), key=lambda i: abs(levels[i] - initial_level))
+
+        inf = float("inf")
+        costs = [inf] * len(levels)
+        costs[start_idx] = 0.0
+        parents: list[list[tuple[int, float] | None]] = [[None] * len(levels) for _ in range(n_slots)]
+
+        for t in range(n_slots):
+            next_costs = [inf] * len(levels)
+            for idx, current_cost in enumerate(costs):
+                if current_cost == inf:
+                    continue
+                for power, next_idx in self._storage_actions(
+                    levels[idx],
+                    levels,
+                    dt_hours,
+                    forbidden,
+                    t,
+                    min_level,
+                    max_level,
+                    max_charge,
+                    max_discharge,
+                    storage.charge_efficiency,
+                    storage.discharge_efficiency,
+                ):
+                    slot_cost = prices[t] * power * dt_hours
+                    candidate = current_cost + slot_cost
+                    if candidate < next_costs[next_idx]:
+                        next_costs[next_idx] = candidate
+                        parents[t][next_idx] = (idx, power)
+            costs = next_costs
+
+        idx = min(range(len(costs)), key=lambda i: costs[i])
         powers = [0.0] * n_slots
-
-        # Determine energy target from constraints
-        energy_target_kwh = 0.0
-        deadline_slot = n_slots - 1
-        forbidden_slots: set[int] = set()
-
-        for cw in constraints:
-            slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
-            if isinstance(cw.requirement, MinEnergyUntil):
-                energy_target_kwh = max(energy_target_kwh, cw.requirement.min_energy_kwh)
-                deadline_slot = min(deadline_slot, slot)
-            elif isinstance(cw.requirement, MinSocUntil) and ev.battery_capacity_kwh:
-                target_energy = ev.battery_capacity_kwh * cw.requirement.min_soc_pct / 100.0
-                energy_target_kwh = max(energy_target_kwh, target_energy * 0.5)  # Assume 50% initial SoC
-                deadline_slot = min(deadline_slot, slot)
-            elif isinstance(cw.requirement, ForbiddenWindow):
-                for t in range(min(slot + 1, n_slots)):
-                    forbidden_slots.add(t)
-
-        # If no target, charge minimally at cheapest times
-        if energy_target_kwh == 0:
-            energy_target_kwh = ev.max_charge_kw * dt_hours * 4  # 4 slots default
-
-        # Select cheapest slots before deadline for charging
-        available = [(prices[t], t) for t in range(min(deadline_slot + 1, n_slots)) if t not in forbidden_slots]
-        available.sort()
-
-        energy_delivered = 0.0
-        for _, t in available:
-            if energy_delivered >= energy_target_kwh:
+        for t in range(n_slots - 1, -1, -1):
+            parent = parents[t][idx]
+            if parent is None:
                 break
-            power = ev.max_charge_kw
-            energy = power * dt_hours
-            if energy_delivered + energy > energy_target_kwh:
-                power = (energy_target_kwh - energy_delivered) / dt_hours
-            powers[t] = max(ev.min_charge_kw, power) if power > 0 else 0.0
-            energy_delivered += powers[t] * dt_hours
-
-        # Apply plan-change penalty
-        if previous_power and plan_change_penalty > 0:
-            damping = 1.0 / (1.0 + plan_change_penalty * 10)
-            for t in range(n_slots):
-                prev = previous_power[t] if t < len(previous_power) else 0.0
-                change = powers[t] - prev
-                powers[t] = prev + change * damping
-
+            idx, power = parent
+            powers[t] = power
         return powers
 
     @staticmethod
-    def _time_to_slot(dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
-        delta = dt - t0
-        slot = int(delta.total_seconds() / (resolution_minutes * 60))
-        return max(0, min(slot, n_slots - 1))
+    def _storage_actions(
+        level: float,
+        levels: list[float],
+        dt_hours: float,
+        forbidden: set[int],
+        slot: int,
+        min_level: float,
+        max_level: float,
+        max_charge: float,
+        max_discharge: float,
+        charge_efficiency: float,
+        discharge_efficiency: float,
+    ) -> list[tuple[float, int]]:
+        if slot in forbidden:
+            return [(0.0, min(range(len(levels)), key=lambda i: abs(levels[i] - level)))]
+
+        candidates = [0.0]
+        spare = max(0.0, max_level - level)
+        if spare > 0 and max_charge > 0:
+            candidates.append(min(max_charge, spare / (dt_hours * charge_efficiency)))
+        available = max(0.0, level - min_level)
+        if available > 0 and max_discharge > 0:
+            candidates.append(-min(max_discharge, available / (dt_hours * discharge_efficiency)))
+
+        actions: list[tuple[float, int]] = []
+        for power in candidates:
+            if power >= 0:
+                next_level = level + power * dt_hours * charge_efficiency
+            else:
+                next_level = level + power * dt_hours * discharge_efficiency
+            next_level = max(min_level, min(max_level, next_level))
+            next_idx = min(range(len(levels)), key=lambda i: abs(levels[i] - next_level))
+            actions.append((power, next_idx))
+        return actions
+
+    def _target(
+        self, constraints: list[ConstraintWindow], t0: datetime, resolution_minutes: int, n_slots: int
+    ) -> tuple[float, float | None, int]:
+        energy = 0.0
+        level: float | None = None
+        deadline = n_slots - 1
+        capacity = self._storage.capacity
+        for cw in constraints:
+            slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
+            req = cw.requirement
+            if isinstance(req, MinEnergyUntil):
+                energy = max(energy, req.min_energy_kwh)
+                deadline = min(deadline, slot)
+            elif isinstance(req, MinSocUntil) and capacity is not None:
+                level = max(level or 0.0, capacity * req.min_soc_pct / 100.0)
+                deadline = min(deadline, slot)
+        return energy, level, deadline
+
+    def _charge_to_target(
+        self,
+        powers: list[float],
+        prices: list[float],
+        required_input: float,
+        deadline_slot: int,
+        forbidden: set[int],
+        max_charge: float,
+        dt_hours: float,
+        previous_power: list[float] | None,
+        plan_change_penalty: float,
+    ) -> list[float]:
+        if required_input <= 0 or max_charge <= 0:
+            return self._dampen(powers, previous_power, plan_change_penalty, clamp_nonnegative=True)
+
+        available = [(prices[t], t) for t in range(min(deadline_slot + 1, len(powers))) if t not in forbidden]
+        available.sort()
+        delivered = 0.0
+        for _, t in available:
+            if delivered >= required_input:
+                break
+            power = min(max_charge, (required_input - delivered) / dt_hours)
+            powers[t] = power
+            delivered += power * dt_hours
+
+        return self._dampen(powers, previous_power, plan_change_penalty, clamp_nonnegative=True)
 
 
-class HeatPumpConsumer(ConsumerModel):
-    """Heat pump consumer — runs when prices are favorable, respecting comfort."""
+class ConverterConsumer(_PrimitiveConsumer):
+    """Converter response using output-factor weighted prices."""
 
-    def __init__(self, manifest: HeatPumpManifest, outdoor_temp_c: float = 5.0) -> None:
-        self._manifest = manifest
+    def __init__(
+        self,
+        manifest: Any,
+        component: ConverterSpec,
+        *,
+        storage: StorageSpec | None = None,
+        outdoor_temp_c: float = 5.0,
+    ) -> None:
+        super().__init__(manifest, component)
+        self._converter = component
+        self._storage = storage
         self._outdoor_temp_c = outdoor_temp_c
 
-    @property
-    def device_id(self) -> str:
-        return self._manifest.device_id
-
-    @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.HEAT_PUMP
-
     def respond_to_prices(
         self,
         prices: list[float],
@@ -298,257 +377,159 @@ class HeatPumpConsumer(ConsumerModel):
         previous_power: list[float] | None = None,
         plan_change_penalty: float = 0.0,
     ) -> list[float]:
-        """Heat pump: prefer cheap slots, respect min/max runtime constraints."""
-        hp = self._manifest
-        powers = [0.0] * n_slots
-
-        # Parse constraints
-        min_runtime_slots = 0
-        max_runtime_slots = n_slots
-        forbidden_slots: set[int] = set()
-
-        for cw in constraints:
-            slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
-            if isinstance(cw.requirement, MinRuntimePerDay):
-                min_runtime_slots = max(min_runtime_slots, int(cw.requirement.min_hours * 60 / resolution_minutes))
-            elif isinstance(cw.requirement, MaxRuntimePerDay):
-                max_runtime_slots = min(max_runtime_slots, int(cw.requirement.max_hours * 60 / resolution_minutes))
-            elif isinstance(cw.requirement, ForbiddenWindow):
-                for t in range(min(slot + 1, n_slots)):
-                    forbidden_slots.add(t)
-
-        # COP-weighted effective price: lower COP → more expensive per heat unit
-        cop = self._get_cop()
-        effective_cost_per_heat = [p / cop for p in prices[:n_slots]]
-
-        # Sort available slots by effective cost
-        available = [(effective_cost_per_heat[t], t) for t in range(n_slots) if t not in forbidden_slots]
-        available.sort()
-
-        # Run for min_runtime_slots cheapest slots, up to max_runtime_slots
-        target_slots = max(min_runtime_slots, min(max_runtime_slots, len(available) // 3))
-        run_slots = set()
-
-        for i, (_, t) in enumerate(available):
-            if i >= target_slots:
-                break
-            run_slots.add(t)
-
-        for t in range(n_slots):
-            if t in run_slots:
-                # Modulate based on price relative to average
-                avg_price = sum(prices[:n_slots]) / n_slots if n_slots > 0 else 0.3
-                modulation = min(1.0, max(hp.min_modulation_pct / 100.0, 1.0 - (prices[t] - avg_price) / avg_price))
-                powers[t] = hp.max_power_kw * modulation
-            else:
-                powers[t] = 0.0
-
-        # Apply plan-change penalty (anti short-cycling)
-        if previous_power and plan_change_penalty > 0:
-            damping = 1.0 / (1.0 + plan_change_penalty * 10)
-            for t in range(n_slots):
-                prev = previous_power[t] if t < len(previous_power) else 0.0
-                change = powers[t] - prev
-                powers[t] = max(0.0, prev + change * damping)
-
-        return powers
-
-    def _get_cop(self) -> float:
-        """Get COP at current outdoor temperature."""
-        cop_map = self._manifest.cop_map or [(-10, 2.5), (0, 3.5), (10, 4.5)]
-        sorted_map = sorted(cop_map, key=lambda x: x[0])
-        temp = self._outdoor_temp_c
-
-        if temp <= sorted_map[0][0]:
-            return sorted_map[0][1]
-        if temp >= sorted_map[-1][0]:
-            return sorted_map[-1][1]
-
-        for i in range(len(sorted_map) - 1):
-            t1, c1 = sorted_map[i]
-            t2, c2 = sorted_map[i + 1]
-            if t1 <= temp <= t2:
-                ratio = (temp - t1) / (t2 - t1)
-                return c1 + ratio * (c2 - c1)
-
-        return sorted_map[-1][1]
-
-    @staticmethod
-    def _time_to_slot(dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
-        delta = dt - t0
-        slot = int(delta.total_seconds() / (resolution_minutes * 60))
-        return max(0, min(slot, n_slots - 1))
-
-
-class WaterHeaterConsumer(ConsumerModel):
-    """Water heater consumer — heats during cheap periods, respects legionella constraints."""
-
-    def __init__(self, manifest: WaterHeaterManifest) -> None:
-        self._manifest = manifest
-
-    @property
-    def device_id(self) -> str:
-        return self._manifest.device_id
-
-    @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.WATER_HEATER
-
-    def respond_to_prices(
-        self,
-        prices: list[float],
-        n_slots: int,
-        resolution_minutes: int,
-        constraints: list[ConstraintWindow],
-        t0: datetime,
-        previous_power: list[float] | None = None,
-        plan_change_penalty: float = 0.0,
-    ) -> list[float]:
-        """Water heater: heat at cheapest slots, ensure min energy for legionella."""
-        wh = self._manifest
+        converter = self._converter
         dt_hours = resolution_minutes / 60.0
+        forbidden = self._forbidden_slots(constraints, t0, resolution_minutes, n_slots)
+        min_runtime, max_runtime = self._runtime_limits(constraints, resolution_minutes, n_slots)
+        required_input, required_output, deadline_slot = self._energy_targets(
+            constraints, t0, resolution_minutes, n_slots
+        )
+
+        if self._storage and self._storage.leakage:
+            required_input = max(required_input, self._storage.leakage * n_slots * dt_hours)
+
+        if required_input <= 0 and required_output <= 0 and min_runtime <= 0:
+            return [0.0] * n_slots
+
+        decision_input = self._prices_for_decision(prices, n_slots)
+        scored: list[tuple[float, int, float]] = []
+        for t in range(n_slots):
+            if t in forbidden:
+                continue
+            factor = self._factor_at_slot(t)
+            price = decision_input[t] if t < len(decision_input) else decision_input[-1]
+            scored.append((price / max(factor, 1e-9), t, factor))
+        scored.sort()
+
         powers = [0.0] * n_slots
+        slots_used = 0
+        input_delivered = 0.0
+        output_delivered = 0.0
+        limit = min(max_runtime, len(scored))
 
-        # Parse constraints
-        min_energy_kwh = 0.0
-        min_runtime_slots = 0
-        forbidden_slots: set[int] = set()
+        for _, t, factor in scored:
+            if slots_used >= limit:
+                break
+            before_deadline = t <= deadline_slot
+            needs_input = required_input > 0 and input_delivered < required_input and before_deadline
+            needs_output = required_output > 0 and output_delivered < required_output and before_deadline
+            needs_runtime = slots_used < min_runtime
+            if not needs_input and not needs_output and not needs_runtime:
+                break
 
+            power = converter.max_input_kw
+            if needs_input and not needs_output and not needs_runtime:
+                power = min(power, (required_input - input_delivered) / dt_hours)
+            if needs_output and not needs_runtime:
+                power = min(power, (required_output - output_delivered) / (dt_hours * max(factor, 1e-9)))
+            powers[t] = max(0.0, power)
+            slots_used += 1  # noqa: SIM113
+            input_delivered += powers[t] * dt_hours
+            output_delivered += powers[t] * dt_hours * factor
+
+        return self._dampen(powers, previous_power, plan_change_penalty, clamp_nonnegative=True)
+
+    def _factor_at_slot(self, slot: int) -> float:
+        if self._converter.factor_ctx == "outdoor_temp":
+            return self._converter.factor_at(self._outdoor_temp_c)
+        return self._converter.factor_at(0.0)
+
+    def _energy_targets(
+        self, constraints: list[ConstraintWindow], t0: datetime, resolution_minutes: int, n_slots: int
+    ) -> tuple[float, float, int]:
+        required_input = 0.0
+        required_output = 0.0
+        deadline = n_slots - 1
         for cw in constraints:
-            slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
-            if isinstance(cw.requirement, MinEnergyUntil):
-                min_energy_kwh = max(min_energy_kwh, cw.requirement.min_energy_kwh)
-            elif isinstance(cw.requirement, MinRuntimePerDay):
-                min_runtime_slots = max(min_runtime_slots, int(cw.requirement.min_hours * 60 / resolution_minutes))
-            elif isinstance(cw.requirement, ForbiddenWindow):
-                for t in range(min(slot + 1, n_slots)):
-                    forbidden_slots.add(t)
+            req = cw.requirement
+            if isinstance(req, MinEnergyUntil):
+                required_input = max(required_input, req.min_energy_kwh)
+                deadline = min(deadline, self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots))
+            elif isinstance(req, ReachMinTempOnce):
+                required_output = max(required_output, self._thermal_delta(req.target_temp_c))
+                deadline = min(deadline, self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots))
+            elif isinstance(req, HoldTempBand):
+                required_output = max(required_output, self._thermal_delta(req.min_temp_c))
+                deadline = min(deadline, self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots))
+        return required_input, required_output, deadline
 
-        # Default: run enough to maintain temperature (standby loss compensation)
-        if min_energy_kwh == 0:
-            # Compensate standby loss over the horizon
-            loss_kwh = wh.standby_loss_w / 1000.0 * (n_slots * resolution_minutes / 60.0)
-            min_energy_kwh = loss_kwh
+    def _thermal_delta(self, target_temp_c: float) -> float:
+        if not self._storage or self._storage.capacity is None:
+            return 0.0
+        return max(0.0, self._storage.capacity * (target_temp_c - _DEFAULT_THERMAL_INITIAL_C))
 
-        # Select cheapest slots
-        available = [(prices[t], t) for t in range(n_slots) if t not in forbidden_slots]
+
+class SinkConsumer(_PrimitiveConsumer):
+    """Sink response for fixed and controllable loads."""
+
+    def __init__(self, manifest: Any, component: SinkSpec) -> None:
+        super().__init__(manifest, component)
+        self._sink = component
+
+    def respond_to_prices(
+        self,
+        prices: list[float],
+        n_slots: int,
+        resolution_minutes: int,
+        constraints: list[ConstraintWindow],
+        t0: datetime,
+        previous_power: list[float] | None = None,
+        plan_change_penalty: float = 0.0,
+    ) -> list[float]:
+        sink = self._sink
+        if not sink.controllable:
+            return [sink.max_power_kw] * n_slots
+
+        dt_hours = resolution_minutes / 60.0
+        forbidden = self._forbidden_slots(constraints, t0, resolution_minutes, n_slots)
+        min_runtime, max_runtime = self._runtime_limits(constraints, resolution_minutes, n_slots)
+        min_energy, deadline_slot = self._energy_target(constraints, t0, resolution_minutes, n_slots)
+
+        if min_energy <= 0 and min_runtime <= 0:
+            return [0.0] * n_slots
+
+        powers = [0.0] * n_slots
+        decision_input = self._prices_for_decision(prices, n_slots)
+        available = [(decision_input[t], t) for t in range(n_slots) if t not in forbidden]
         available.sort()
+        energy = 0.0
 
-        energy_delivered = 0.0
         slots_used = 0
         for _, t in available:
-            if energy_delivered >= min_energy_kwh and slots_used >= min_runtime_slots:
+            if slots_used >= max_runtime:
                 break
-            powers[t] = wh.max_power_kw
-            energy_delivered += wh.max_power_kw * dt_hours
+            needs_energy = min_energy > 0 and energy < min_energy and t <= deadline_slot
+            needs_runtime = slots_used < min_runtime
+            if not needs_energy and not needs_runtime:
+                break
+
+            power = sink.max_power_kw
+            if needs_energy and not needs_runtime:
+                power = min(power, (min_energy - energy) / dt_hours)
+            powers[t] = max(sink.min_power_kw, power)
+            energy += powers[t] * dt_hours
             slots_used += 1  # noqa: SIM113
 
-        # Apply plan-change penalty
-        if previous_power and plan_change_penalty > 0:
-            damping = 1.0 / (1.0 + plan_change_penalty * 10)
-            for t in range(n_slots):
-                prev = previous_power[t] if t < len(previous_power) else 0.0
-                change = powers[t] - prev
-                powers[t] = max(0.0, prev + change * damping)
+        return self._dampen(powers, previous_power, plan_change_penalty, clamp_nonnegative=True)
 
-        return powers
-
-    @staticmethod
-    def _time_to_slot(dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
-        delta = dt - t0
-        slot = int(delta.total_seconds() / (resolution_minutes * 60))
-        return max(0, min(slot, n_slots - 1))
-
-
-class ThermostatConsumer(ConsumerModel):
-    """Thermostat load consumer — binary on/off, prefers cheap slots."""
-
-    def __init__(self, manifest: ThermostatLoadManifest) -> None:
-        self._manifest = manifest
-
-    @property
-    def device_id(self) -> str:
-        return self._manifest.device_id
-
-    @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.THERMOSTAT_LOAD
-
-    def respond_to_prices(
-        self,
-        prices: list[float],
-        n_slots: int,
-        resolution_minutes: int,
-        constraints: list[ConstraintWindow],
-        t0: datetime,
-        previous_power: list[float] | None = None,
-        plan_change_penalty: float = 0.0,
-    ) -> list[float]:
-        """Thermostat: allow heating in cheapest slots, respect min/max runtime."""
-        thermo = self._manifest
-        powers = [0.0] * n_slots
-
-        # Parse constraints
-        min_runtime_slots = 0
-        max_runtime_slots = n_slots
-        forbidden_slots: set[int] = set()
-
+    def _energy_target(
+        self, constraints: list[ConstraintWindow], t0: datetime, resolution_minutes: int, n_slots: int
+    ) -> tuple[float, int]:
+        energy = 0.0
+        deadline = n_slots - 1
         for cw in constraints:
-            slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
-            if isinstance(cw.requirement, MinRuntimePerDay):
-                min_runtime_slots = max(min_runtime_slots, int(cw.requirement.min_hours * 60 / resolution_minutes))
-            elif isinstance(cw.requirement, MaxRuntimePerDay):
-                max_runtime_slots = min(max_runtime_slots, int(cw.requirement.max_hours * 60 / resolution_minutes))
-            elif isinstance(cw.requirement, ForbiddenWindow):
-                for t in range(min(slot + 1, n_slots)):
-                    forbidden_slots.add(t)
-
-        # Default: run for ~30% of slots
-        target_slots = max(min_runtime_slots, min(max_runtime_slots, n_slots // 3))
-
-        # Sort available by price
-        available = [(prices[t], t) for t in range(n_slots) if t not in forbidden_slots]
-        available.sort()
-
-        run_slots: set[int] = set()
-        for i, (_, t) in enumerate(available):
-            if i >= target_slots:
-                break
-            run_slots.add(t)
-
-        for t in range(n_slots):
-            powers[t] = thermo.max_power_kw if t in run_slots else 0.0
-
-        # Apply plan-change penalty
-        if previous_power and plan_change_penalty > 0:
-            damping = 1.0 / (1.0 + plan_change_penalty * 10)
-            for t in range(n_slots):
-                prev = previous_power[t] if t < len(previous_power) else 0.0
-                change = powers[t] - prev
-                powers[t] = max(0.0, prev + change * damping)
-
-        return powers
-
-    @staticmethod
-    def _time_to_slot(dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
-        delta = dt - t0
-        slot = int(delta.total_seconds() / (resolution_minutes * 60))
-        return max(0, min(slot, n_slots - 1))
+            if isinstance(cw.requirement, MinEnergyUntil):
+                energy = max(energy, cw.requirement.min_energy_kwh)
+                deadline = min(deadline, self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots))
+        return energy, deadline
 
 
-class PVForecastConsumer(ConsumerModel):
-    """PV forecast consumer — produces power based on forecast (negative = generation)."""
+class SourceConsumer(_PrimitiveConsumer):
+    """Source response from an explicit generation forecast."""
 
-    def __init__(self, manifest: PVForecastManifest) -> None:
-        self._manifest = manifest
-
-    @property
-    def device_id(self) -> str:
-        return self._manifest.device_id
-
-    @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.PV_FORECAST
+    def __init__(self, manifest: Any, component: SourceSpec) -> None:
+        super().__init__(manifest, component)
+        self._source = component
 
     def respond_to_prices(
         self,
@@ -560,42 +541,18 @@ class PVForecastConsumer(ConsumerModel):
         previous_power: list[float] | None = None,
         plan_change_penalty: float = 0.0,
     ) -> list[float]:
-        """PV: generate synthetic solar curve (negative power = production)."""
-        pv = self._manifest
-        powers = [0.0] * n_slots
-
+        forecast = self._source.forecast or []
+        if not forecast:
+            return [0.0] * n_slots
+        powers: list[float] = []
         for t in range(n_slots):
-            slot_start = t0 + timedelta(minutes=t * resolution_minutes)
-            hour = slot_start.hour + slot_start.minute / 60.0
-            # Solar bell curve centered at noon
-            solar_factor = max(0.0, math.cos((hour - 12) * math.pi / 12)) ** 2
-            # Only produce during daylight (6-18)
-            if 6 <= hour <= 18:
-                powers[t] = -pv.peak_power_kwp * solar_factor * 0.8  # 80% typical yield
-            else:
-                powers[t] = 0.0
-
+            value = forecast[t] if t < len(forecast) else forecast[-1]
+            powers.append(-abs(value))
         return powers
 
 
-class RoomConsumer(ConsumerModel):
-    """Room consumer — passive thermal model, no direct power decision.
-
-    The room does not consume power directly but influences heat pump/thermostat
-    decisions through its thermal characteristics.
-    Returns zero power (room is a thermal zone, not an actuator).
-    """
-
-    def __init__(self, manifest: RoomManifest) -> None:
-        self._manifest = manifest
-
-    @property
-    def device_id(self) -> str:
-        return self._manifest.device_id
-
-    @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.ROOM
+class NodeConsumer(_PrimitiveConsumer):
+    """State node with no direct electrical response."""
 
     def respond_to_prices(
         self,
@@ -607,28 +564,23 @@ class RoomConsumer(ConsumerModel):
         previous_power: list[float] | None = None,
         plan_change_penalty: float = 0.0,
     ) -> list[float]:
-        """Room: no direct power — returns zeros."""
         return [0.0] * n_slots
 
 
-class PassiveLoadConsumer(ConsumerModel):
-    """Passive load consumer — fixed consumption profile, not steerable.
+class CompositeConsumer(ConsumerModel):
+    """Single-device response assembled from one or more primitive consumers."""
 
-    Distributes the typical daily kWh evenly across all slots as a fixed
-    positive power draw.  The solver cannot optimize this — it just appears
-    in the power balance as unavoidable consumption.
-    """
-
-    def __init__(self, manifest: PassiveLoadManifest) -> None:
+    def __init__(self, manifest: Any, consumers: list[ConsumerModel]) -> None:
         self._manifest = manifest
+        self._consumers = consumers
 
     @property
     def device_id(self) -> str:
         return self._manifest.device_id
 
     @property
-    def device_type(self) -> ManifestType:
-        return ManifestType.PASSIVE_LOAD
+    def device_type(self) -> Any:
+        return getattr(self._manifest, "type", None)
 
     def respond_to_prices(
         self,
@@ -640,38 +592,58 @@ class PassiveLoadConsumer(ConsumerModel):
         previous_power: list[float] | None = None,
         plan_change_penalty: float = 0.0,
     ) -> list[float]:
-        """Passive load: return flat power curve based on typical daily consumption."""
-        horizon_hours = n_slots * resolution_minutes / 60.0
-        daily_fraction = horizon_hours / 24.0
-        total_kwh = self._manifest.typical_daily_kwh * daily_fraction
-        power_kw = total_kwh / horizon_hours if horizon_hours > 0 else 0.0
-        return [power_kw] * n_slots
+        total = [0.0] * n_slots
+        for consumer in self._consumers:
+            powers = consumer.respond_to_prices(
+                prices,
+                n_slots,
+                resolution_minutes,
+                constraints,
+                t0,
+                previous_power=previous_power,
+                plan_change_penalty=plan_change_penalty,
+            )
+            total = [total[t] + powers[t] for t in range(n_slots)]
+        return total
 
 
 def get_consumer_model(manifest: Any, outdoor_temp_c: float = 5.0) -> ConsumerModel | None:
-    """Factory: create the appropriate consumer model for a manifest.
+    """Compile a manifest to a primitive-based local response model."""
+    to_components = getattr(manifest, "to_components", None)
+    if to_components is None:
+        return None
 
-    Args:
-        manifest: Device manifest.
-        outdoor_temp_c: Outdoor temperature (for heat pump COP).
+    components = list(to_components())
+    storage = next(
+        (
+            component
+            for component in components
+            if component.primitive == Primitive.STORAGE and isinstance(component, StorageSpec)
+        ),
+        None,
+    )
+    consumers: list[ConsumerModel] = []
 
-    Returns:
-        ConsumerModel instance, or None for unsupported types.
-    """
-    if isinstance(manifest, BatteryManifest):
-        return BatteryConsumer(manifest)
-    if isinstance(manifest, EVChargerManifest):
-        return EVChargerConsumer(manifest)
-    if isinstance(manifest, HeatPumpManifest):
-        return HeatPumpConsumer(manifest, outdoor_temp_c=outdoor_temp_c)
-    if isinstance(manifest, WaterHeaterManifest):
-        return WaterHeaterConsumer(manifest)
-    if isinstance(manifest, ThermostatLoadManifest):
-        return ThermostatConsumer(manifest)
-    if isinstance(manifest, PVForecastManifest):
-        return PVForecastConsumer(manifest)
-    if isinstance(manifest, RoomManifest):
-        return RoomConsumer(manifest)
-    if isinstance(manifest, PassiveLoadManifest):
-        return PassiveLoadConsumer(manifest)
-    return None
+    for component in components:
+        if component.primitive == Primitive.SOURCE and isinstance(component, SourceSpec):
+            consumers.append(SourceConsumer(manifest, component))
+        elif component.primitive == Primitive.SINK and isinstance(component, SinkSpec):
+            consumers.append(SinkConsumer(manifest, component))
+        elif component.primitive == Primitive.STORAGE and isinstance(component, StorageSpec) and component.node is None:
+            consumers.append(StorageConsumer(manifest, component))
+        elif component.primitive == Primitive.CONVERTER and isinstance(component, ConverterSpec):
+            consumers.append(ConverterConsumer(manifest, component, storage=storage, outdoor_temp_c=outdoor_temp_c))
+        elif component.primitive == Primitive.NODE:
+            has_electrical_component = any(
+                candidate.primitive in {Primitive.SOURCE, Primitive.SINK, Primitive.STORAGE, Primitive.CONVERTER}
+                and not (isinstance(candidate, StorageSpec) and candidate.node is not None)
+                for candidate in components
+            )
+            if not has_electrical_component:
+                consumers.append(NodeConsumer(manifest, component))
+
+    if not consumers:
+        return None
+    if len(consumers) == 1:
+        return consumers[0]
+    return CompositeConsumer(manifest, consumers)
