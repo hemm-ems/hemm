@@ -156,11 +156,11 @@ migration; assert average `cost_gap_pct < 3%` and per-scenario comfort/stability
 
 ### Functional Requirements
 
-- **FR-001** `⬜ todo` `unit` `SR-006`: System MUST define a primitive/component model
+- **FR-001** `✅ done` `unit` `SR-006`: System MUST define a primitive/component model
   (`manifest/components.py`) with five primitives — **source**, **sink**, **storage**,
   **converter**, **node/bus** — each carrying only solver-relevant parameters (no HA, no
   UX) and, where applicable, a state variable (storage level/SoC; node thermal state).
-- **FR-002** `⬜ todo` `unit` `SR-006`: Every named manifest type MUST expose a
+- **FR-002** `✅ done` `unit` `SR-006`: Every named manifest type MUST expose a
   `to_components() -> list[ComponentSpec]` compile step. The 8 mappings are: PVForecast →
   `source`(elec); PassiveLoad → `sink`(elec, `controllable=False`, fixed profile); Battery
   → `storage`(elec); EVCharger → `storage`(elec, charge-only, deadline-aware); Room →
@@ -170,18 +170,18 @@ migration; assert average `cost_gap_pct < 3%` and per-scenario comfort/stability
   today); ThermostatLoad → `converter`(elec→thermal[`room_id`], η≈1)
   **or** `sink` if no `room_id`; WaterHeater → a DHW `node` + a `converter`(elec→DHW, η≈1)
   + `storage` on that node.
-- **FR-003** `⬜ todo` `unit` `SR-006`: The compile step MUST be a declarative mapping
+- **FR-003** `✅ done` `unit` `SR-006`: The compile step MUST be a declarative mapping
   table — no per-manifest custom Python. Adding a device type means adding a manifest that
   composes existing primitives, not new solver branches. (*Falsifies the thesis if violated.*)
-- **FR-004** `⬜ todo` `unit` `SR-006`: Every `testdata/scenarios/*.yaml` manifest MUST
+- **FR-004** `✅ done` `unit` `SR-006`: Every `testdata/scenarios/*.yaml` manifest MUST
   round-trip through `to_components()` to a well-formed component set (verified before any
   solver is cut over).
-- **FR-005** `⬜ todo` `unit` `SR-004`: Backend A (`solvers/milp_central.py`) MUST build its
+- **FR-005** `✅ done` `unit` `SR-004`: Backend A (`solvers/milp_central.py`) MUST build its
   Pyomo model from the component set — one builder per primitive plus an explicit bus
   balance (`Σin = Σout` per node, electrical bus implicit/global) — replacing the
   per-concrete-type `isinstance` blocks (battery SoC, room RC, water-heater DHW,
   `_get_power_bounds` ladder).
-- **FR-006** `⬜ todo` `unit` `SR-004`: The Backend A cutover MUST be proven by **per-device
+- **FR-006** `✅ done` `unit` `SR-004`: The Backend A cutover MUST be proven by **per-device
   golden plan-parity**: for every device whose component mapping reproduces its pre-refactor
   solver treatment, the post-refactor per-slot power MUST equal the pre-refactor golden
   within a documented numeric tolerance, and each scenario's objective MUST match within
@@ -202,28 +202,28 @@ migration; assert average `cost_gap_pct < 3%` and per-scenario comfort/stability
   Any device that diverges from its golden and is **not** in this enumerated set is a
   regression and MUST fail the gate. (*Constitution IV: the oracle's existing plans are never
   broken; making it honor a previously-dropped constraint is the opposite of breaking it.*)
-- **FR-007** `⬜ todo` `unit` `SR-006`: COP interpolation MUST be lifted out of heat-pump
+- **FR-007** `✅ done` `unit` `SR-006`: COP interpolation MUST be lifted out of heat-pump
   special-casing into a generic `ConverterSpec.factor_at(ctx)` (the existing
   `_piecewise_cop` / `cop_at_temp` logic), so any converter can have a context-dependent
   factor; clamped at the COP-map ends (unchanged behavior).
-- **FR-008** `⬜ todo` `unit` `SR-006`: Constraint-window application MUST target a
+- **FR-008** `✅ done` `unit` `SR-006`: Constraint-window application MUST target a
   primitive's state var or flow, not a device type: `min_soc_until` → any **storage** level
   var; `reach_min_temp_once` / `hold_temp_band` → any **node** with a thermal state var;
   `min_energy_until` → a flow integral on any sink/storage power var; `forbidden_window`,
   `min_runtime_per_day`, `max_runtime_per_day` → the device `on`/power var. Constraint-type
   **semantics are unchanged** (no version bumps).
-- **FR-009** `⬜ todo` `unit` `SR-005`: Backend B (`solvers/consumers.py`) MUST be migrated
+- **FR-009** `✅ done` `unit` `SR-005`: Backend B (`solvers/consumers.py`) MUST be migrated
   to consume the same component model (retiring the per-type `ConsumerModel` subclass
   factory), and MUST continue to satisfy the existing A/B harness gate (avg
   `cost_gap_pct < 3%`, comfort violations ≤ A, plan-stability ratio ≤ 1.5×).
-- **FR-010** `⬜ todo` `SR-006`: Primitive/component metadata MUST be added to the exported
+- **FR-010** `✅ done` `SR-006`: Primitive/component metadata MUST be added to the exported
   JSON schema and validator, exposed additively — **not** required of existing manifests
   (Constitution II). Existing manifests validate unchanged.
-- **FR-011** `⬜ todo` `unit` `SR-006`: The dead `DeviceRole` enum MUST be folded into a new
+- **FR-011** `✅ done` `unit` `SR-006`: The dead `DeviceRole` enum MUST be folded into a new
   `Primitive` enum (`source`/`sink`/`storage`/`converter`/`node`). This is an accepted
   breaking change to the exported enum **name** in the schema; the type→primitive mapping
   replaces the current type→role mapping.
-- **FR-012** `⬜ todo` `SR-006`: A brand-new device manifest (e.g. `pool_pump` → controllable
+- **FR-012** `✅ done` `SR-006`: A brand-new device manifest (e.g. `pool_pump` → controllable
   `sink`) MUST plan correctly with **no** new solver code — the falsifiable thesis smoke
   test. This is the acceptance gate for the whole feature. (*integration tier: proven
   end-to-end through a real solve.*)

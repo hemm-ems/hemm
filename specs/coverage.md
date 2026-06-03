@@ -37,6 +37,24 @@ done FRs covered at intended tier: 9/9
 | FR-010 | ⬜ todo | integration | no-test | — |
 | FR-011 | ⬜ todo | integration | no-test | — |
 
+## Spec 003
+done FRs covered at intended tier: 12/12
+
+| FR | Status | Want | Coverage | Tests |
+|----|--------|------|----------|-------|
+| FR-001 | ✅ done | unit | unit | test_components.py |
+| FR-002 | ✅ done | unit | unit | test_components.py |
+| FR-003 | ✅ done | unit | unit | test_components.py, test_thesis_zero_solver.py |
+| FR-004 | ✅ done | unit | unit | test_components.py |
+| FR-005 | ✅ done | unit | unit | test_solver_parity.py |
+| FR-006 | ✅ done | unit | unit | test_solver_parity.py |
+| FR-007 | ✅ done | unit | unit | test_components.py |
+| FR-008 | ✅ done | unit | unit | test_constraints_generic.py |
+| FR-009 | ✅ done | unit | unit | test_comparison.py |
+| FR-010 | ✅ done | integration | integration | test_schema_export.py, test_schema_primitives.py |
+| FR-011 | ✅ done | unit | unit | test_components.py, test_manifest_types.py |
+| FR-012 | ✅ done | integration | integration | test_manifest_types.py, test_sim.py, test_validator.py, test_pool_pump_thesis.py |
+
 ## Spec 004
 done FRs covered at intended tier: 5/5
 
@@ -134,9 +152,9 @@ done FRs covered at intended tier: 5/5
 | SR-001 | HEMM is a Home Assistant integration, configured in HA | 5 | 5/5 | 007:FR-001, 007:FR-002, 007:FR-003, 007:FR-004, 007:FR-007 |
 | SR-002 | HEMM plans the energy-relevant entities of a house | 1 | 1/1 | 001:FR-009 |
 | SR-003 | HEMM re-plans against reality on a periodic tick | 6 | 3/3 | 002:FR-011, 008:FR-001, 008:FR-002, 008:FR-003, 008:FR-004, 008:FR-005 |
-| SR-004 | A central MILP solver produces the plan (the default backend) | 10 | 9/9 | 002:FR-001, 002:FR-002, 002:FR-003, 002:FR-004, 002:FR-005, 002:FR-006, 002:FR-007, 002:FR-008, 002:FR-009, 002:FR-010 |
-| SR-005 | A distributed backend exists behind the same interface, evaluated against the oracle | 7 | 6/6 | 005:FR-001, 005:FR-002, 005:FR-003, 005:FR-004, 005:FR-005, 005:FR-006, 005:FR-007 |
-| SR-006 | Devices describe themselves declaratively; the core holds no vendor knowledge | 8 | 8/8 | 001:FR-001, 001:FR-002, 001:FR-004, 001:FR-005, 001:FR-006, 001:FR-007, 001:FR-011, 001:FR-012 |
+| SR-004 | A central MILP solver produces the plan (the default backend) | 12 | 11/11 | 002:FR-001, 002:FR-002, 002:FR-003, 002:FR-004, 002:FR-005, 002:FR-006, 002:FR-007, 002:FR-008, 002:FR-009, 002:FR-010, 003:FR-005, 003:FR-006 |
+| SR-005 | A distributed backend exists behind the same interface, evaluated against the oracle | 8 | 7/7 | 003:FR-009, 005:FR-001, 005:FR-002, 005:FR-003, 005:FR-004, 005:FR-005, 005:FR-006, 005:FR-007 |
+| SR-006 | Devices describe themselves declaratively; the core holds no vendor knowledge | 17 | 17/17 | 001:FR-001, 001:FR-002, 001:FR-004, 001:FR-005, 001:FR-006, 001:FR-007, 001:FR-011, 001:FR-012, 003:FR-001, 003:FR-002, 003:FR-003, 003:FR-004, 003:FR-007, 003:FR-008, 003:FR-010, 003:FR-011, 003:FR-012 |
 | SR-007 | Forecast and price signals enter through pluggable adapters | 8 | 6/6 | 004:FR-001, 004:FR-002, 004:FR-003, 004:FR-004, 004:FR-005, 004:FR-006, 004:FR-007, 008:FR-010 |
 | SR-008 | Demand enters through a service API driven by HA automations | 4 | 3/3 | 001:FR-010, 008:FR-006, 008:FR-007, 008:FR-009 |
 | SR-009 | HEMM observes and plans, but actuates only through verified user actions | 11 | 8/8 | 001:FR-003, 001:FR-008, 001:FR-013, 008:FR-008, 010:FR-001, 010:FR-002, 010:FR-003, 010:FR-004, 010:FR-005, 010:FR-006, 010:FR-007 |
