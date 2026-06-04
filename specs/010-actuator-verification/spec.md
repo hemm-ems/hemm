@@ -92,12 +92,12 @@ trust contract for a new install and the default posture.
 - **FR-003** `✅ done` `SR-009`: The actuator engine MUST honor `dry_run: true` —
   run the full path including verification evaluation and audit recording, with
   no real script call and no state change.
-- **FR-004** `🔶 partial` `SR-009`: Immediately before every actuation call, HEMM
+- **FR-004** `✅ done` `SR-009`: Immediately before every actuation call, HEMM
   MUST re-validate the hard constraints / current state for that device; if the
   pre-call check fails, HEMM MUST skip the script call and fall back to the
-  device's `safe_default`. *(Engine + unit-tested; container SC-005 passes in
-  isolation but is flaky in the full Phase 7 suite due to shared HA session
-  state — needs deterministic constraint-state reset between tests.)*
+  device's `safe_default`. *(Engine + unit-tested; container SC-005 now passes in
+  the full Phase 7 suite — made order-independent via a clean-slate config entry
+  per test, eliminating leftover-device leakage.)*
 - **FR-005** `✅ done` `SR-009`: A watchdog MUST invoke each device's
   `safe_default` action when the coordinator has not completed a successful
   update within a configurable timeout (default 30 min). Watchdog-driven
@@ -106,13 +106,14 @@ trust contract for a new install and the default posture.
 - **FR-006** `✅ done` `SR-009`: HEMM MUST expose a per-device override
   (`switch.hemm_<device>_override`) that, while on, suspends HEMM actuation for
   that device (treated as observe-only) without affecting other devices.
-- **FR-007** `🔶 partial` `SR-009`: HEMM MUST maintain an inspectable, anonymized
+- **FR-007** `✅ done` `SR-009`: HEMM MUST maintain an inspectable, anonymized
   actuation audit log (a sensor and/or the diagnostics dump) recording each
   attempt and its outcome (`verified` / `unverified` / `retried` /
   `safe_default` / `skipped:read_only` / `skipped:override` / `dry_run`), with no
   raw entity values that would leak PII. *(Engine + unit-tested; container SC-008
-  passes in isolation but the anonymization-audit assertion is flaky when run
-  after several other SCs — same shared-session-state cause as FR-004.)*
+  now passes in the full Phase 7 suite — made self-contained: it provisions a
+  clean-slate entry, produces its own `verified` audit entry, then asserts
+  anonymization, instead of relying on leftover entries from prior SCs.)*
 
 ### Key Entities
 
