@@ -162,9 +162,10 @@ class TestABOnStandardScenarios:
         assert metrics.a_status == "success"
         assert metrics.b_status == "success"
 
-    @pytest.mark.slow
+    # REQ: 003:FR-009
+    @pytest.mark.req("003:FR-009")
     def test_all_standard_scenarios(self) -> None:
-        """Run A/B comparison on all 6 standard scenarios."""
+        """Run A/B comparison across the standard scenarios."""
         scenario_files = sorted(SCENARIOS_DIR.glob("*.yaml"))
         assert len(scenario_files) >= 6
 
@@ -176,7 +177,19 @@ class TestABOnStandardScenarios:
         report = runner.compare_scenarios(scenarios)
 
         assert len(report.scenarios) == len(scenarios)
-        # All should succeed
+
         for m in report.scenarios:
             assert m.a_status == "success", f"Backend A failed on {m.scenario_name}"
             assert m.b_status == "success", f"Backend B failed on {m.scenario_name}"
+
+        avg_cost_gap_pct = sum(abs(m.cost_gap_pct) for m in report.scenarios) / len(report.scenarios)
+        assert avg_cost_gap_pct < 3.0
+
+        for m in report.scenarios:
+            assert m.b_constraint_violations <= m.a_constraint_violations, (
+                f"Backend B comfort worse on {m.scenario_name}: "
+                f"A={m.a_constraint_violations}, B={m.b_constraint_violations}"
+            )
+            assert m.plan_stability_ratio <= 1.5, (
+                f"Backend B plan stability worse on {m.scenario_name}: {m.plan_stability_ratio:.3f}"
+            )

@@ -29,7 +29,8 @@ manifests:
   - ../manifests/simple_house/pv_forecast.json
   - ../manifests/simple_house/battery.json
   - ../manifests/simple_house/ev_charger.json
-  - ../manifests/simple_house/thermostat_load.json
+  - ../manifests/simple_house/room_bathroom.json
+  - ../manifests/simple_house/thermostat_load_bathroom.json
 
 constraint_windows:
   - window_id: ev_morning_charge
@@ -40,7 +41,7 @@ constraint_windows:
       min_soc_pct: 80
     priority_penalty: 5.0
   - window_id: thermostat_comfort
-    device_id: bathroom_heater
+    device_id: bathroom
     deadline: "2026-05-07T23:59:00+00:00"
     requirement:
       type: hold_temp_band

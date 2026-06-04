@@ -7,22 +7,18 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-
-class DeviceRole(StrEnum):
-    """Abstract energy role of a device in the home energy system.
-
-    - generator: produces energy (PV, wind, CHP)
-    - adjustable_sink: consumes energy, HEMM can steer (HP, WH, thermostat)
-    - passive_sink: consumes energy, not steerable (kitchen, lighting baseline)
-    - storage: stores and releases energy bidirectionally (battery)
-    - thermal_zone: passive thermal model, no direct power (room)
-    """
-
-    GENERATOR = "generator"
-    ADJUSTABLE_SINK = "adjustable_sink"
-    PASSIVE_SINK = "passive_sink"
-    STORAGE = "storage"
-    THERMAL_ZONE = "thermal_zone"
+from hemm_core.manifest.components import (
+    DEFAULT_COP_MAP,
+    DEFAULT_THERMAL_MASS_KWH_PER_K,
+    INSULATION_U_VALUE,
+    ComponentSpec,
+    ConverterSpec,
+    NodeSpec,
+    Primitive,
+    SinkSpec,
+    SourceSpec,
+    StorageSpec,
+)
 
 
 class ManifestType(StrEnum):
@@ -36,22 +32,24 @@ class ManifestType(StrEnum):
     PV_FORECAST = "pv_forecast"
     EV_CHARGER = "ev_charger"
     PASSIVE_LOAD = "passive_load"
+    POOL_PUMP = "pool_pump"
 
     @property
-    def role(self) -> DeviceRole:
-        """Return the abstract energy role for this manifest type."""
-        return _TYPE_ROLES[self]
+    def primitives(self) -> tuple[Primitive, ...]:
+        """Return the distinct solver primitives this manifest type can produce."""
+        return _TYPE_PRIMITIVES[self]
 
 
-_TYPE_ROLES: dict[ManifestType, DeviceRole] = {
-    ManifestType.ROOM: DeviceRole.THERMAL_ZONE,
-    ManifestType.THERMOSTAT_LOAD: DeviceRole.ADJUSTABLE_SINK,
-    ManifestType.HEAT_PUMP: DeviceRole.ADJUSTABLE_SINK,
-    ManifestType.WATER_HEATER: DeviceRole.ADJUSTABLE_SINK,
-    ManifestType.BATTERY: DeviceRole.STORAGE,
-    ManifestType.PV_FORECAST: DeviceRole.GENERATOR,
-    ManifestType.EV_CHARGER: DeviceRole.ADJUSTABLE_SINK,
-    ManifestType.PASSIVE_LOAD: DeviceRole.PASSIVE_SINK,
+_TYPE_PRIMITIVES: dict[ManifestType, tuple[Primitive, ...]] = {
+    ManifestType.ROOM: (Primitive.NODE,),
+    ManifestType.THERMOSTAT_LOAD: (Primitive.CONVERTER, Primitive.SINK),
+    ManifestType.HEAT_PUMP: (Primitive.CONVERTER, Primitive.SINK),
+    ManifestType.WATER_HEATER: (Primitive.NODE, Primitive.CONVERTER, Primitive.STORAGE),
+    ManifestType.BATTERY: (Primitive.STORAGE,),
+    ManifestType.PV_FORECAST: (Primitive.SOURCE,),
+    ManifestType.EV_CHARGER: (Primitive.STORAGE,),
+    ManifestType.PASSIVE_LOAD: (Primitive.SINK,),
+    ManifestType.POOL_PUMP: (Primitive.SINK,),
 }
 
 
@@ -143,6 +141,11 @@ class _ManifestBase(BaseModel):
             raise ValueError(msg)
         return self
 
+    def to_components(self) -> list[ComponentSpec]:
+        """Compile this named manifest into solver primitive components."""
+        msg = f"{type(self).__name__} must implement to_components()"
+        raise NotImplementedError(msg)
+
 
 class RoomManifest(_ManifestBase):
     """Room manifest — thermally modeled room with comfort band."""
@@ -154,6 +157,30 @@ class RoomManifest(_ManifestBase):
     window_area_m2: float | None = Field(default=None, ge=0, description="Window area in m²")
     south_facing_windows: bool = False
     insulation_class: str | None = Field(default=None, description="'good', 'medium', 'poor' — beginner tier shortcut")
+
+    def to_components(self) -> list[ComponentSpec]:
+        # Resolve thermal_mass + UA exactly as the Backend-A room RC block does
+        # (solvers/milp_central.py): envelope = floor + window area; U-value falls
+        # back to the insulation class; both carry the solver defaults so the
+        # NodeSpec is a complete, parity-exact solver input.
+        thermal_mass = self.thermal_mass_kwh_per_k or DEFAULT_THERMAL_MASS_KWH_PER_K
+        envelope_area = self.floor_area_m2 + (self.window_area_m2 or 0.0)
+        u_val = self.u_value_w_per_m2k
+        if u_val is None:
+            u_val = INSULATION_U_VALUE.get(self.insulation_class or "medium", 0.5)
+        ua = u_val * envelope_area / 1000.0  # W/K → kW/K
+        return [
+            NodeSpec(
+                device_id=self.device_id,
+                bus=f"thermal:{self.device_id}",
+                quantity="thermal",
+                thermal_mass=thermal_mass,
+                ua=ua,
+                ambient_ctx="outdoor_temp",
+                comfort_band=None,
+                initial=None,
+            )
+        ]
 
 
 class ThermostatLoadManifest(_ManifestBase):
@@ -167,6 +194,19 @@ class ThermostatLoadManifest(_ManifestBase):
     max_power_kw: float = Field(gt=0, description="Maximum power draw in kW")
     hysteresis_k: float = Field(default=0.5, gt=0, description="Hysteresis band in K")
     room_id: str | None = Field(default=None, description="device_id of the RoomManifest this heater serves")
+
+    def to_components(self) -> list[ComponentSpec]:
+        if self.room_id:
+            return [
+                ConverterSpec(
+                    device_id=self.device_id,
+                    output_bus=f"thermal:{self.room_id}",
+                    max_input_kw=self.max_power_kw,
+                    factor_map=[(0.0, 1.0)],
+                    factor_ctx="none",
+                )
+            ]
+        return [SinkSpec(device_id=self.device_id, max_power_kw=self.max_power_kw, controllable=True)]
 
 
 class HeatPumpManifest(_ManifestBase):
@@ -188,6 +228,20 @@ class HeatPumpManifest(_ManifestBase):
         default="water", description="Heat sink type: air (split AC) or water (radiator/floor)"
     )
 
+    def to_components(self) -> list[ComponentSpec]:
+        if self.room_id:
+            return [
+                ConverterSpec(
+                    device_id=self.device_id,
+                    input_bus="elec",
+                    output_bus=f"thermal:{self.room_id}",
+                    max_input_kw=self.max_power_kw,
+                    factor_map=self.cop_map or DEFAULT_COP_MAP,
+                    factor_ctx="outdoor_temp",
+                )
+            ]
+        return [SinkSpec(device_id=self.device_id, max_power_kw=self.max_power_kw, controllable=True)]
+
 
 class WaterHeaterManifest(_ManifestBase):
     """Water heater manifest — hot water tank."""
@@ -199,6 +253,39 @@ class WaterHeaterManifest(_ManifestBase):
     standby_loss_w: float = Field(default=50, ge=0, description="Standby heat loss in Watts")
     insulation_class: str | None = Field(default=None, description="'good', 'medium', 'poor'")
     loss_coefficient_w_per_k: float | None = Field(default=None, gt=0)
+
+    def to_components(self) -> list[ComponentSpec]:
+        node_id = f"thermal:{self.device_id}"
+        thermal_mass = self.volume_liters * 4.186 / 3600.0
+        ua = None
+        if self.loss_coefficient_w_per_k is not None:
+            ua = self.loss_coefficient_w_per_k / 1000.0
+
+        return [
+            NodeSpec(
+                device_id=self.device_id,
+                bus=node_id,
+                quantity="thermal",
+                thermal_mass=thermal_mass,
+                ua=ua,
+                ambient_ctx="outdoor_temp",
+                comfort_band=None,
+                initial=None,
+            ),
+            ConverterSpec(
+                device_id=self.device_id,
+                output_bus=node_id,
+                max_input_kw=self.max_power_kw,
+                factor_map=[(0.0, 1.0)],
+                factor_ctx="none",
+            ),
+            StorageSpec(
+                device_id=self.device_id,
+                node=node_id,
+                capacity=thermal_mass,
+                leakage=self.standby_loss_w / 1000.0,
+            ),
+        ]
 
 
 class BatteryManifest(_ManifestBase):
@@ -212,6 +299,21 @@ class BatteryManifest(_ManifestBase):
     discharge_efficiency: float = Field(default=0.95, gt=0, le=1)
     min_soc_pct: float = Field(default=10, ge=0, le=100)
     max_soc_pct: float = Field(default=100, ge=0, le=100)
+
+    def to_components(self) -> list[ComponentSpec]:
+        return [
+            StorageSpec(
+                device_id=self.device_id,
+                capacity=self.capacity_kwh,
+                max_charge_kw=self.max_charge_kw,
+                max_discharge_kw=self.max_discharge_kw,
+                charge_efficiency=self.charge_efficiency,
+                discharge_efficiency=self.discharge_efficiency,
+                min_level=self.capacity_kwh * self.min_soc_pct / 100.0,
+                max_level=self.capacity_kwh * self.max_soc_pct / 100.0,
+                charge_only=False,
+            )
+        ]
 
 
 class PVForecastManifest(_ManifestBase):
@@ -231,6 +333,9 @@ class PVForecastManifest(_ManifestBase):
     forecast_adapter: str = Field(default="solcast", description="Forecast source adapter name")
     forecast_entity: str | None = Field(default=None, description="HA entity for forecast data")
 
+    def to_components(self) -> list[ComponentSpec]:
+        return [SourceSpec(device_id=self.device_id, forecast=None)]
+
 
 class EVChargerManifest(_ManifestBase):
     """EV charger manifest — EV charger with plug-in state and targets."""
@@ -242,6 +347,18 @@ class EVChargerManifest(_ManifestBase):
     plug_state_entity: str | None = Field(default=None, description="HA entity for plug-in state")
     soc_entity: str | None = Field(default=None, description="HA entity for current SoC")
     battery_capacity_kwh: float | None = Field(default=None, gt=0, description="EV battery capacity")
+
+    def to_components(self) -> list[ComponentSpec]:
+        return [
+            StorageSpec(
+                device_id=self.device_id,
+                capacity=self.battery_capacity_kwh,
+                max_charge_kw=self.max_charge_kw,
+                charge_only=True,
+                max_level=self.battery_capacity_kwh,
+                min_level=0.0,
+            )
+        ]
 
 
 class PassiveLoadManifest(_ManifestBase):
@@ -257,6 +374,35 @@ class PassiveLoadManifest(_ManifestBase):
         default=None, description="HA entity tracking actual consumption for forecasting"
     )
 
+    def to_components(self) -> list[ComponentSpec]:
+        power_kw = self.typical_daily_kwh / 24.0
+        return [
+            SinkSpec(
+                device_id=self.device_id,
+                controllable=False,
+                min_power_kw=power_kw,
+                max_power_kw=power_kw,
+            )
+        ]
+
+
+class PoolPumpManifest(_ManifestBase):
+    """Pool pump manifest — steerable electrical circulation pump."""
+
+    type: ManifestType = ManifestType.POOL_PUMP
+    max_power_kw: float = Field(gt=0, description="Maximum motor power draw in kW")
+
+    def to_components(self) -> list[ComponentSpec]:
+        return [
+            SinkSpec(
+                device_id=self.device_id,
+                bus="elec",
+                min_power_kw=0.0,
+                max_power_kw=self.max_power_kw,
+                controllable=True,
+            )
+        ]
+
 
 # Discriminated union of all manifest types
 DeviceManifest = Annotated[
@@ -267,6 +413,7 @@ DeviceManifest = Annotated[
     | BatteryManifest
     | PVForecastManifest
     | EVChargerManifest
-    | PassiveLoadManifest,
+    | PassiveLoadManifest
+    | PoolPumpManifest,
     Field(discriminator="type"),
 ]

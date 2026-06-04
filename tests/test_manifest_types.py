@@ -15,11 +15,12 @@ from hemm_core.manifest.types import (
     Action,
     BatteryManifest,
     ControlClass,
-    DeviceRole,
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
     PassiveLoadManifest,
+    PoolPumpManifest,
+    Primitive,
     RetryPolicy,
     RoomManifest,
     VerificationContract,
@@ -37,8 +38,8 @@ class TestManifestTypeEnum:
     """Tests for ManifestType enum."""
 
     @pytest.mark.unit
-    def test_eight_types(self) -> None:
-        assert len(ManifestType) == 8
+    def test_nine_types(self) -> None:
+        assert len(ManifestType) == 9
 
     @pytest.mark.unit
     @pytest.mark.req("001:FR-001")
@@ -52,37 +53,44 @@ class TestManifestTypeEnum:
             "pv_forecast",
             "ev_charger",
             "passive_load",
+            "pool_pump",
         }
         assert {t.value for t in ManifestType} == expected
 
 
-class TestDeviceRole:
-    """Tests for DeviceRole enum and ManifestType.role property."""
+class TestPrimitiveMapping:
+    """Tests for Primitive enum and ManifestType.primitives property."""
 
     @pytest.mark.unit
-    def test_five_roles(self) -> None:
-        assert len(DeviceRole) == 5
+    @pytest.mark.req("003:FR-011")
+    def test_five_primitives(self) -> None:
+        assert len(Primitive) == 5
 
     @pytest.mark.unit
-    def test_role_values(self) -> None:
-        expected = {"generator", "adjustable_sink", "passive_sink", "storage", "thermal_zone"}
-        assert {r.value for r in DeviceRole} == expected
+    @pytest.mark.req("003:FR-011")
+    def test_primitive_values(self) -> None:
+        expected = {"source", "sink", "storage", "converter", "node"}
+        assert {p.value for p in Primitive} == expected
 
     @pytest.mark.unit
-    def test_every_manifest_type_has_role(self) -> None:
+    @pytest.mark.req("003:FR-011")
+    def test_every_manifest_type_has_primitives(self) -> None:
         for mt in ManifestType:
-            assert isinstance(mt.role, DeviceRole)
+            assert mt.primitives
+            assert all(isinstance(p, Primitive) for p in mt.primitives)
 
     @pytest.mark.unit
-    def test_role_mapping(self) -> None:
-        assert ManifestType.ROOM.role == DeviceRole.THERMAL_ZONE
-        assert ManifestType.THERMOSTAT_LOAD.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.HEAT_PUMP.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.WATER_HEATER.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.BATTERY.role == DeviceRole.STORAGE
-        assert ManifestType.PV_FORECAST.role == DeviceRole.GENERATOR
-        assert ManifestType.EV_CHARGER.role == DeviceRole.ADJUSTABLE_SINK
-        assert ManifestType.PASSIVE_LOAD.role == DeviceRole.PASSIVE_SINK
+    @pytest.mark.req("003:FR-011")
+    def test_primitive_mapping(self) -> None:
+        assert ManifestType.ROOM.primitives == (Primitive.NODE,)
+        assert ManifestType.THERMOSTAT_LOAD.primitives == (Primitive.CONVERTER, Primitive.SINK)
+        assert ManifestType.HEAT_PUMP.primitives == (Primitive.CONVERTER, Primitive.SINK)
+        assert ManifestType.WATER_HEATER.primitives == (Primitive.NODE, Primitive.CONVERTER, Primitive.STORAGE)
+        assert ManifestType.BATTERY.primitives == (Primitive.STORAGE,)
+        assert ManifestType.PV_FORECAST.primitives == (Primitive.SOURCE,)
+        assert ManifestType.EV_CHARGER.primitives == (Primitive.STORAGE,)
+        assert ManifestType.PASSIVE_LOAD.primitives == (Primitive.SINK,)
+        assert ManifestType.POOL_PUMP.primitives == (Primitive.SINK,)
 
 
 class TestAction:
@@ -304,6 +312,48 @@ class TestPassiveLoadManifest:
         assert restored == original
 
 
+class TestPoolPumpManifest:
+    """Tests for PoolPump manifest type."""
+
+    @pytest.mark.unit
+    @pytest.mark.req("003:FR-012")
+    def test_minimal(self) -> None:
+        m = PoolPumpManifest(
+            device_id="pool1",
+            name="Pool Pump",
+            max_power_kw=1.2,
+            safe_default=_make_safe_default(),
+        )
+        assert m.type == ManifestType.POOL_PUMP
+        assert m.max_power_kw == 1.2
+
+    @pytest.mark.unit
+    @pytest.mark.req("003:FR-012")
+    def test_to_components_is_controllable_sink(self) -> None:
+        m = PoolPumpManifest(
+            device_id="pool1",
+            name="Pool Pump",
+            max_power_kw=1.2,
+            safe_default=_make_safe_default(),
+        )
+        component = m.to_components()[0]
+        assert component.primitive == Primitive.SINK
+        assert component.bus == "elec"
+        assert component.min_power_kw == 0.0
+        assert component.max_power_kw == 1.2
+        assert component.controllable is True
+
+    @pytest.mark.unit
+    def test_invalid_zero_power(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            PoolPumpManifest(
+                device_id="pool1",
+                name="Pool Pump",
+                max_power_kw=0.0,
+                safe_default=_make_safe_default(),
+            )
+
+
 class TestHeatPumpSourceSink:
     """Tests for heat pump source_type/sink_type fields."""
 
@@ -523,6 +573,7 @@ class TestControlClass:
     def test_control_class_in_all_device_types(self) -> None:
         """Every device type accepts control_class field."""
         from hemm_core.manifest.types import (
+            PoolPumpManifest,
             PVForecastManifest,
             ThermostatLoadManifest,
             WaterHeaterManifest,
@@ -546,6 +597,7 @@ class TestControlClass:
             PVForecastManifest(device_id="p", name="P", peak_power_kwp=10.0, safe_default=_make_safe_default()),
             EVChargerManifest(device_id="e", name="E", max_charge_kw=11.0, safe_default=_make_safe_default()),
             PassiveLoadManifest(device_id="pl", name="PL", typical_daily_kwh=8.0, safe_default=_make_safe_default()),
+            PoolPumpManifest(device_id="pp", name="PP", max_power_kw=1.2, safe_default=_make_safe_default()),
         ]
         for m in manifests:
             assert m.control_class == ControlClass.PLANNED
@@ -605,6 +657,7 @@ class TestTestdataManifests:
             "ev_charger.json",
             "thermostat_load.json",
             "passive_load.json",
+            "pool_pump.json",
         ],
     )
     def test_simple_house_manifest_valid(self, filename: str) -> None:
@@ -619,8 +672,8 @@ class TestTestdataManifests:
         assert manifest.safe_default.script
 
     @pytest.mark.unit
-    def test_all_eight_types_covered(self) -> None:
-        """The simple house set must cover all 8 manifest types."""
+    def test_all_nine_types_covered(self) -> None:
+        """The simple house set must cover all 9 manifest types."""
         types_seen: set[str] = set()
         for filepath in TESTDATA_DIR.glob("*.json"):
             data: dict[str, Any] = json.loads(filepath.read_text(encoding="utf-8"))

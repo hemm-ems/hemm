@@ -1,0 +1,41 @@
+{
+  "type": "thermostat_load",
+  "device_id": "bathroom_heater",
+  "name": "Bathroom Towel Radiator",
+  "max_power_kw": 1.2,
+  "hysteresis_k": 1.0,
+  "room_id": "bathroom",
+  "constraint_endpoints": {
+    "hold_temp_band": ">=1",
+    "forbidden_window": ">=1",
+    "max_runtime_per_day": ">=1"
+  },
+  "actions": {
+    "allow": {
+      "script": "script.bathroom_heater_allow",
+      "verify": {
+        "entity": "switch.bathroom_heater_relay",
+        "expected": "== on",
+        "within_seconds": 10
+      },
+      "timeout_seconds": 30
+    },
+    "block": {
+      "script": "script.bathroom_heater_block",
+      "verify": {
+        "entity": "switch.bathroom_heater_relay",
+        "expected": "== off",
+        "within_seconds": 10
+      },
+      "timeout_seconds": 30
+    }
+  },
+  "safe_default": {
+    "script": "script.bathroom_heater_safe_default",
+    "description": "Allow thermostat to control freely"
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {"cost_per_kwh": 0.30}
+  }
+}

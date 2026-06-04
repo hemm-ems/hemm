@@ -14,6 +14,8 @@ from hemm_core.manifest.schema_export import (
     get_manifest_schema,
     get_message_schema,
 )
+from hemm_core.manifest.types import ManifestType
+from hemm_core.manifest.validator import primitives_for_type, validate_manifest
 
 
 @pytest.mark.req("001:FR-011")
@@ -37,9 +39,51 @@ class TestSchemaExport:
             "pv_forecast",
             "ev_charger",
             "passive_load",
+            "pool_pump",
         ]:
             schema = get_manifest_schema(t)
             assert "properties" in schema
+
+    @pytest.mark.unit
+    @pytest.mark.req("003:FR-010")
+    def test_manifest_schemas_include_primitive_metadata(self) -> None:
+        # REQ: 003:FR-010
+        expected = {
+            "room": ["node"],
+            "thermostat_load": ["converter", "sink"],
+            "heat_pump": ["converter", "sink"],
+            "water_heater": ["node", "converter", "storage"],
+            "battery": ["storage"],
+            "pv_forecast": ["source"],
+            "ev_charger": ["storage"],
+            "passive_load": ["sink"],
+            "pool_pump": ["sink"],
+        }
+
+        all_schemas = get_all_schemas()
+        for manifest_type, primitive_values in expected.items():
+            schema = get_manifest_schema(manifest_type)
+            assert schema["x-hemm-primitives"] == primitive_values
+            assert all_schemas[f"manifest/{manifest_type}"]["x-hemm-primitives"] == primitive_values
+            assert [primitive.value for primitive in ManifestType(manifest_type).primitives] == primitive_values
+            assert [primitive.value for primitive in primitives_for_type(manifest_type)] == primitive_values
+
+    @pytest.mark.unit
+    @pytest.mark.req("003:FR-010")
+    def test_primitive_metadata_is_additive_for_existing_manifests(self) -> None:
+        manifest = {
+            "type": "battery",
+            "device_id": "bat1",
+            "name": "Battery",
+            "capacity_kwh": 10.0,
+            "max_charge_kw": 5.0,
+            "max_discharge_kw": 5.0,
+            "safe_default": {"script": "script.bat_safe"},
+        }
+
+        validated = validate_manifest(manifest)
+
+        assert validated.device_id == "bat1"
 
     @pytest.mark.unit
     def test_get_manifest_schema_unknown(self) -> None:
@@ -64,15 +108,15 @@ class TestSchemaExport:
     @pytest.mark.unit
     def test_get_all_schemas(self) -> None:
         schemas = get_all_schemas()
-        # 8 manifests + 7 constraints + 4 messages = 19
-        assert len(schemas) == 19
+        # 9 manifests + 7 constraints + 4 messages = 20
+        assert len(schemas) == 20
 
     @pytest.mark.unit
     def test_export_schemas_json_valid(self) -> None:
         result = export_schemas_json()
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
-        assert len(parsed) == 19
+        assert len(parsed) == 20
 
 
 class TestCLISchema:
@@ -84,7 +128,7 @@ class TestCLISchema:
         assert ret == 0
         output = capsys.readouterr().out
         parsed = json.loads(output)
-        assert len(parsed) == 19
+        assert len(parsed) == 20
 
     @pytest.mark.unit
     def test_schema_specific_type(self, capsys: pytest.CaptureFixture[str]) -> None:

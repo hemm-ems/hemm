@@ -11,6 +11,16 @@ from typing import Any
 
 import pyomo.environ as pyo  # type: ignore[import-untyped]
 
+from hemm_core.manifest.components import (
+    DEFAULT_COP_MAP,
+    ComponentSpec,
+    ConverterSpec,
+    NodeSpec,
+    Primitive,
+    SinkSpec,
+    SourceSpec,
+    StorageSpec,
+)
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
     HoldTempBand,
@@ -21,38 +31,12 @@ from hemm_core.manifest.constraints import (
     ReachMinTempOnce,
 )
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
-from hemm_core.manifest.types import (
-    BatteryManifest,
-    EVChargerManifest,
-    HeatPumpManifest,
-    ManifestType,
-    PassiveLoadManifest,
-    RoomManifest,
-    ThermostatLoadManifest,
-    WaterHeaterManifest,
-)
+from hemm_core.manifest.validator import validate_constraint_targets
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
 from hemm_core.time import Clock, WallClock
 
 # Default plan-change penalty weight (€/kW² per slot deviation from previous plan)
 PLAN_CHANGE_PENALTY_WEIGHT = 0.01
-
-# Default COP curve for heat pumps if none provided
-DEFAULT_COP_MAP: list[tuple[float, float]] = [
-    (-15.0, 2.0),
-    (-10.0, 2.5),
-    (-5.0, 3.0),
-    (0.0, 3.5),
-    (5.0, 4.0),
-    (10.0, 4.5),
-    (15.0, 5.0),
-]
-
-# Insulation class → default U-value in W/(m²·K)
-_INSULATION_U_VALUE: dict[str, float] = {"good": 0.25, "medium": 0.5, "poor": 1.0}
-
-# Default thermal mass when not specified (kWh/K) — light construction single room
-_DEFAULT_THERMAL_MASS_KWH_PER_K = 2.0
 
 # Default indoor temperature for initial condition (°C)
 _DEFAULT_INDOOR_TEMP_C = 20.0
@@ -62,36 +46,16 @@ _BIG_M_TEMP = 50.0
 
 
 def _piecewise_cop(cop_map: list[tuple[float, float]], outdoor_temp: float) -> float:
-    """Interpolate COP from a piecewise-linear COP map.
-
-    Args:
-        cop_map: List of (outdoor_temp_c, cop) tuples, sorted by temperature.
-        outdoor_temp: Current outdoor temperature.
-
-    Returns:
-        Interpolated COP value.
-    """
+    """Backward-compatible wrapper around ConverterSpec.factor_at()."""
     if not cop_map:
         return 3.5  # reasonable default
-
-    sorted_map = sorted(cop_map, key=lambda x: x[0])
-
-    # Below minimum temperature in map
-    if outdoor_temp <= sorted_map[0][0]:
-        return sorted_map[0][1]
-    # Above maximum temperature in map
-    if outdoor_temp >= sorted_map[-1][0]:
-        return sorted_map[-1][1]
-
-    # Linear interpolation
-    for i in range(len(sorted_map) - 1):
-        t1, c1 = sorted_map[i]
-        t2, c2 = sorted_map[i + 1]
-        if t1 <= outdoor_temp <= t2:
-            ratio = (outdoor_temp - t1) / (t2 - t1)
-            return c1 + ratio * (c2 - c1)
-
-    return sorted_map[-1][1]
+    converter = ConverterSpec(
+        device_id="_compat",
+        output_bus="thermal:_compat",
+        max_input_kw=0.0,
+        factor_map=cop_map,
+    )
+    return converter.factor_at(outdoor_temp)
 
 
 class MILPCentralSolver:
@@ -135,6 +99,8 @@ class MILPCentralSolver:
         if n_slots <= 0:
             return SolverResult(status=SolverStatus.ERROR, diagnostics={"error": "Invalid horizon/resolution"})
 
+        validate_constraint_targets(manifests, constraint_windows)
+
         # Extend or truncate price forecast to match slots
         prices = self._align_prices(price_forecast, n_slots, resolution_minutes)
 
@@ -151,110 +117,54 @@ class MILPCentralSolver:
         device_ids = [m.device_id for m in manifests]
         model.D = pyo.Set(initialize=device_ids)
 
+        components_by_device: dict[str, list[ComponentSpec]] = {
+            manifest.device_id: list(manifest.to_components()) for manifest in manifests
+        }
+        components = [
+            component for device_components in components_by_device.values() for component in device_components
+        ]
+        storage_components = {
+            component.device_id: component for component in components if isinstance(component, StorageSpec)
+        }
+        node_components = {
+            component.device_id: component for component in components if isinstance(component, NodeSpec)
+        }
+
         # Decision variables: power per device per time slot
         model.power = pyo.Var(model.D, model.T, domain=pyo.Reals)
 
         # Binary variables for on/off (needed for min runtime, forbidden windows)
         model.on = pyo.Var(model.D, model.T, domain=pyo.Binary)
 
-        # Build device-specific constraints
-        device_map: dict[str, Any] = {m.device_id: m for m in manifests}
-
-        # Power bounds per device
+        # Build device-specific constraints from primitive components
         model.power_bounds = pyo.ConstraintList()
-        for did in device_ids:
-            manifest = device_map[did]
-            bounds = self._get_power_bounds(manifest)
-            for t in model.T:
-                model.power_bounds.add(model.power[did, t] >= bounds[0])
-                model.power_bounds.add(model.power[did, t] <= bounds[1])
-                # Link on/off to power
-                model.power_bounds.add(model.power[did, t] <= bounds[1] * model.on[did, t])
+        model.component_constraints = pyo.ConstraintList()
 
-        # Battery SoC tracking
-        battery_devs = [did for did, m in device_map.items() if m.type == ManifestType.BATTERY]
-        if battery_devs:
+        if storage_components:
             model.soc = pyo.Var(
-                [(d, t) for d in battery_devs for t in range(n_slots + 1)],
+                [(d, t) for d in storage_components for t in range(n_slots + 1)],
                 domain=pyo.NonNegativeReals,
             )
-            model.soc_constraints = pyo.ConstraintList()
-            for did in battery_devs:
-                bat = device_map[did]
-                assert isinstance(bat, BatteryManifest)
-                cap = bat.capacity_kwh
-                # Initial SoC at 50%
-                model.soc_constraints.add(model.soc[did, 0] == cap * 0.5)
-                for t in range(n_slots):
-                    dt_hours = resolution_minutes / 60.0
-                    # Positive power = charging, negative = discharging
-                    model.soc_constraints.add(
-                        model.soc[did, t + 1]
-                        == model.soc[did, t] + model.power[did, t] * dt_hours * bat.charge_efficiency
-                    )
-                    # SoC bounds
-                    model.soc_constraints.add(model.soc[did, t + 1] >= cap * bat.min_soc_pct / 100.0)
-                    model.soc_constraints.add(model.soc[did, t + 1] <= cap * bat.max_soc_pct / 100.0)
 
-        # ── Thermal model (RC per room) ──────────────────────────────
         outdoor_temps = self._align_weather(weather_forecast, n_slots)
-        room_devs = {did: m for did, m in device_map.items() if isinstance(m, RoomManifest)}
-
-        if room_devs:
-            # Build room → heater mapping via room_id
-            room_heaters: dict[str, list[str]] = {rid: [] for rid in room_devs}
-            for did, m in device_map.items():
-                rid = getattr(m, "room_id", None)
-                if rid and rid in room_heaters:
-                    room_heaters[rid].append(did)
-
-            room_ids = list(room_devs.keys())
-            # Temperature state variable: T[room, t] for t in 0..n_slots
+        if node_components:
             model.temp = pyo.Var(
-                [(r, t) for r in room_ids for t in range(n_slots + 1)],
+                [(d, t) for d in node_components for t in range(n_slots + 1)],
                 domain=pyo.Reals,
             )
             model.thermal_constraints = pyo.ConstraintList()
 
-            dt_hours = resolution_minutes / 60.0
-
-            for rid in room_ids:
-                room = room_devs[rid]
-                assert isinstance(room, RoomManifest)
-
-                # Derive thermal parameters
-                c_kwh_per_k = room.thermal_mass_kwh_per_k or _DEFAULT_THERMAL_MASS_KWH_PER_K
-                envelope_area = room.floor_area_m2 + (room.window_area_m2 or 0.0)
-                u_val = room.u_value_w_per_m2k
-                if u_val is None:
-                    u_val = _INSULATION_U_VALUE.get(room.insulation_class or "medium", 0.5)
-                ua_kw = u_val * envelope_area / 1000.0  # W→kW
-
-                # Initial temperature
-                model.thermal_constraints.add(model.temp[rid, 0] == _DEFAULT_INDOOR_TEMP_C)
-
-                heater_ids = room_heaters[rid]
-
-                for t in range(n_slots):
-                    t_out = outdoor_temps[t]
-
-                    # Q_in = sum of heat from heaters.  For heat pumps multiply
-                    # electrical power by COP at the slot's outdoor temperature.
-                    q_in: Any = 0.0
-                    for hid in heater_ids:
-                        hm = device_map[hid]
-                        if isinstance(hm, HeatPumpManifest):
-                            cop = self.cop_at_temp(hm, t_out)
-                            q_in += model.power[hid, t] * cop
-                        else:
-                            # Thermostat loads, water heaters: electrical power ≈ heat
-                            q_in += model.power[hid, t]
-
-                    # RC dynamics: T[t+1] = T[t] + dt*(Q_in - UA*(T[t] - T_out)) / C
-                    model.thermal_constraints.add(
-                        model.temp[rid, t + 1]
-                        == model.temp[rid, t] + dt_hours * (q_in - ua_kw * (model.temp[rid, t] - t_out)) / c_kwh_per_k
-                    )
+        for component in components:
+            if component.primitive == Primitive.SOURCE:
+                self._add_source(model, component, n_slots)
+            elif component.primitive == Primitive.SINK:
+                self._add_sink(model, component)
+            elif component.primitive == Primitive.STORAGE:
+                self._add_storage(model, component, n_slots, resolution_minutes)
+            elif component.primitive == Primitive.CONVERTER:
+                self._add_converter(model, component)
+            elif component.primitive == Primitive.NODE:
+                self._add_node(model, component, components, outdoor_temps, n_slots, resolution_minutes)
 
         # Apply constraint windows (including thermal constraints)
         model.constraint_windows = pyo.ConstraintList()
@@ -265,7 +175,8 @@ class MILPCentralSolver:
         self._apply_constraint_windows(
             model,
             constraint_windows,
-            device_map,
+            components_by_device,
+            storage_components,
             t0,
             n_slots,
             resolution_minutes,
@@ -372,31 +283,124 @@ class MILPCentralSolver:
                 temps.append(weather_forecast[-1][1])
         return temps
 
-    def _get_power_bounds(self, manifest: Any) -> tuple[float, float]:
-        """Get min/max power bounds for a device."""
-        if isinstance(manifest, BatteryManifest):
-            return (-manifest.max_discharge_kw, manifest.max_charge_kw)
-        if isinstance(manifest, EVChargerManifest):
-            return (0.0, manifest.max_charge_kw)
-        if isinstance(manifest, HeatPumpManifest):
-            return (0.0, manifest.max_power_kw)
-        if isinstance(manifest, ThermostatLoadManifest):
-            return (0.0, manifest.max_power_kw)
-        if isinstance(manifest, WaterHeaterManifest):
-            return (0.0, manifest.max_power_kw)
-        if isinstance(manifest, PassiveLoadManifest):
-            # Fixed load — power is determined by typical daily consumption,
-            # distributed evenly.  Bounds are fixed to that value.
-            avg_kw = manifest.typical_daily_kwh / 24.0
-            return (avg_kw, avg_kw)
-        # PV forecast, Room — no direct power decision
-        return (0.0, 0.0)
+    def _add_power_bounds(self, model: pyo.ConcreteModel, device_id: str, lower: float, upper: float) -> None:
+        """Add power bounds and the legacy one-sided on/off link."""
+        for t in model.T:
+            model.power_bounds.add(model.power[device_id, t] >= lower)
+            model.power_bounds.add(model.power[device_id, t] <= upper)
+            model.power_bounds.add(model.power[device_id, t] <= upper * model.on[device_id, t])
+
+    def _add_source(self, model: pyo.ConcreteModel, component: ComponentSpec, n_slots: int) -> None:
+        """Add a source primitive. PV remains pinned to zero when no forecast is supplied."""
+        assert isinstance(component, SourceSpec)
+        forecast = component.forecast or [0.0] * n_slots
+        for t in model.T:
+            upper = forecast[int(t)] if int(t) < len(forecast) else forecast[-1]
+            model.power_bounds.add(model.power[component.device_id, t] >= 0.0)
+            model.power_bounds.add(model.power[component.device_id, t] <= upper)
+            model.power_bounds.add(model.power[component.device_id, t] <= upper * model.on[component.device_id, t])
+
+    def _add_sink(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
+        """Add a controllable or fixed sink primitive."""
+        assert isinstance(component, SinkSpec)
+        self._add_power_bounds(model, component.device_id, component.min_power_kw, component.max_power_kw)
+
+    def _add_storage(
+        self,
+        model: pyo.ConcreteModel,
+        component: ComponentSpec,
+        n_slots: int,
+        resolution_minutes: int,
+    ) -> None:
+        """Add storage level recursion and direct electrical bounds where applicable."""
+        assert isinstance(component, StorageSpec)
+        if component.node is None:
+            upper = component.max_charge_kw if component.max_charge_kw is not None else 0.0
+            lower = 0.0 if component.charge_only else -component.max_discharge_kw
+            self._add_power_bounds(model, component.device_id, lower, upper)
+
+        if component.capacity is None:
+            return
+
+        dt_hours = resolution_minutes / 60.0
+        max_level = component.max_level if component.max_level is not None else component.capacity
+        model.component_constraints.add(model.soc[component.device_id, 0] == component.capacity * 0.5)
+        for t in range(n_slots):
+            leakage = component.leakage or 0.0
+            model.component_constraints.add(
+                model.soc[component.device_id, t + 1]
+                == model.soc[component.device_id, t]
+                + model.power[component.device_id, t] * dt_hours * component.charge_efficiency
+                - leakage * dt_hours
+            )
+            model.component_constraints.add(model.soc[component.device_id, t + 1] >= component.min_level)
+            if component.max_level is not None:
+                model.component_constraints.add(model.soc[component.device_id, t + 1] <= max_level)
+
+    def _add_converter(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
+        """Add converter input-power bounds; thermal injection is consumed by node builders."""
+        assert isinstance(component, ConverterSpec)
+        self._add_power_bounds(model, component.device_id, 0.0, component.max_input_kw)
+
+    def _add_node(
+        self,
+        model: pyo.ConcreteModel,
+        component: ComponentSpec,
+        components: list[ComponentSpec],
+        outdoor_temps: list[float],
+        n_slots: int,
+        resolution_minutes: int,
+    ) -> None:
+        """Add the RC balance for a thermal node."""
+        assert isinstance(component, NodeSpec)
+        if component.quantity != "thermal":
+            return
+
+        dt_hours = resolution_minutes / 60.0
+        thermal_mass = component.thermal_mass or 1.0
+        ua_kw = component.ua or 0.0
+        initial = component.initial if component.initial is not None else _DEFAULT_INDOOR_TEMP_C
+        converters = [
+            candidate
+            for candidate in components
+            if isinstance(candidate, ConverterSpec) and candidate.output_bus == component.bus
+        ]
+        has_power_component = any(
+            candidate.device_id == component.device_id
+            and (
+                isinstance(candidate, (ConverterSpec, SinkSpec, SourceSpec))
+                or (isinstance(candidate, StorageSpec) and candidate.node is None)
+            )
+            for candidate in components
+        )
+        leakage_kw = sum(
+            candidate.leakage or 0.0
+            for candidate in components
+            if isinstance(candidate, StorageSpec) and candidate.node == component.bus
+        )
+
+        if not has_power_component:
+            self._add_power_bounds(model, component.device_id, 0.0, 0.0)
+
+        model.thermal_constraints.add(model.temp[component.device_id, 0] == initial)
+        for t in range(n_slots):
+            q_in: Any = 0.0
+            for converter in converters:
+                ctx = outdoor_temps[t] if converter.factor_ctx == "outdoor_temp" else 0.0
+                q_in += model.power[converter.device_id, t] * converter.factor_at(ctx)
+            t_out = outdoor_temps[t]
+            model.thermal_constraints.add(
+                model.temp[component.device_id, t + 1]
+                == model.temp[component.device_id, t]
+                + dt_hours * (q_in - leakage_kw - ua_kw * (model.temp[component.device_id, t] - t_out)) / thermal_mass
+            )
 
     def _apply_constraint_windows(
         self,
         model: pyo.ConcreteModel,
         constraint_windows: list[ConstraintWindow],
-        device_map: dict[str, Any],
+        components_by_device: dict[str, list[ComponentSpec]],
+        storage_components: dict[str, StorageSpec],
         t0: datetime,
         n_slots: int,
         resolution_minutes: int,
@@ -406,9 +410,10 @@ class MILPCentralSolver:
         """Apply constraint windows to the Pyomo model."""
         if thermal_penalty_terms is None:
             thermal_penalty_terms = []
+        state_vars_by_device = self._state_vars_by_device(components_by_device)
 
         for cw in constraint_windows:
-            if cw.device_id not in device_map:
+            if cw.device_id not in components_by_device:
                 continue
 
             deadline_slot = self._time_to_slot(cw.deadline, t0, resolution_minutes, n_slots)
@@ -420,11 +425,11 @@ class MILPCentralSolver:
                     model.constraint_windows.add(model.on[cw.device_id, t] == 0)
 
             elif isinstance(req, MinSocUntil):
-                # Battery SoC must be >= target by deadline
-                if cw.device_id in [d for d, m in device_map.items() if m.type == ManifestType.BATTERY]:
-                    bat = device_map[cw.device_id]
-                    assert isinstance(bat, BatteryManifest)
-                    target_kwh = bat.capacity_kwh * req.min_soc_pct / 100.0
+                # Storage level must be >= target by deadline.
+                if "level" in state_vars_by_device[cw.device_id]:
+                    storage = storage_components[cw.device_id]
+                    assert storage.capacity is not None
+                    target_kwh = storage.capacity * req.min_soc_pct / 100.0
                     if deadline_slot < n_slots:
                         model.constraint_windows.add(model.soc[cw.device_id, deadline_slot + 1] >= target_kwh)
 
@@ -441,30 +446,30 @@ class MILPCentralSolver:
                 # Binary reached[t]: 1 iff T[room, t] >= target.
                 # Linearised via big-M: T[t] - target >= -M*(1 - reached[t])
                 # At least one reached[t] == 1 up to deadline.
-                room_id = cw.device_id
-                if hasattr(model, "temp") and any((r, 0) in model.temp for r in [room_id]):
+                node_id = cw.device_id
+                if "temp" in state_vars_by_device[node_id]:
                     target = req.target_temp_c
                     reached_vars: list[Any] = []
                     for t in range(min(deadline_slot + 1, n_slots) + 1):
                         r_var = model.thermal_reached.add()
                         reached_vars.append(r_var)
                         # Big-M linearisation: T >= target - M*(1 - reached)
-                        model.constraint_windows.add(model.temp[room_id, t] - target >= -_BIG_M_TEMP * (1 - r_var))
+                        model.constraint_windows.add(model.temp[node_id, t] - target >= -_BIG_M_TEMP * (1 - r_var))
                     # At least one must be reached
                     model.constraint_windows.add(sum(reached_vars) >= 1)
 
             elif isinstance(req, HoldTempBand):
                 # Soft comfort band: T[room, t] in [min_temp, max_temp]
                 # with slack variables penalised in the objective.
-                room_id = cw.device_id
-                if hasattr(model, "temp") and any((r, 0) in model.temp for r in [room_id]):
+                node_id = cw.device_id
+                if "temp" in state_vars_by_device[node_id]:
                     for t in range(min(deadline_slot + 1, n_slots) + 1):
                         s_lo = model.thermal_slack_lo.add()
                         s_hi = model.thermal_slack_hi.add()
                         # T[t] + s_lo >= min_temp
-                        model.constraint_windows.add(model.temp[room_id, t] + s_lo >= req.min_temp_c)
+                        model.constraint_windows.add(model.temp[node_id, t] + s_lo >= req.min_temp_c)
                         # T[t] - s_hi <= max_temp
-                        model.constraint_windows.add(model.temp[room_id, t] - s_hi <= req.max_temp_c)
+                        model.constraint_windows.add(model.temp[node_id, t] - s_hi <= req.max_temp_c)
                         thermal_penalty_terms.append(cw.priority_penalty * (s_lo + s_hi))
 
             elif isinstance(req, MinRuntimePerDay):
@@ -475,6 +480,19 @@ class MILPCentralSolver:
             elif isinstance(req, MaxRuntimePerDay):
                 max_slots = int(req.max_hours * 60 / resolution_minutes)
                 model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in model.T) <= max_slots)
+
+    @staticmethod
+    def _state_vars_by_device(components_by_device: dict[str, list[ComponentSpec]]) -> dict[str, set[str]]:
+        """Map each device to primitive-backed state/flow vars available to constraints."""
+        state_vars: dict[str, set[str]] = {}
+        for device_id, components in components_by_device.items():
+            device_vars = {"power", "on"}
+            if any(isinstance(component, StorageSpec) and component.capacity is not None for component in components):
+                device_vars.add("level")
+            if any(isinstance(component, NodeSpec) and component.quantity == "thermal" for component in components):
+                device_vars.add("temp")
+            state_vars[device_id] = device_vars
+        return state_vars
 
     def _time_to_slot(self, dt: datetime, t0: datetime, resolution_minutes: int, n_slots: int) -> int:
         """Convert a datetime to a slot index."""
@@ -604,8 +622,8 @@ class MILPCentralSolver:
         # Active but no specific reason identified → cheap_grid (solver chose for cost)
         return PlanReason.CHEAP_GRID
 
-    def cop_at_temp(self, manifest: HeatPumpManifest, outdoor_temp: float | None = None) -> float:
-        """Get COP for a heat pump at the given outdoor temperature."""
+    def cop_at_temp(self, manifest: Any, outdoor_temp: float | None = None) -> float:
+        """Backward-compatible COP helper; solver converters use factor_at()."""
         temp = outdoor_temp if outdoor_temp is not None else self._outdoor_temp_c
-        cop_map = manifest.cop_map or DEFAULT_COP_MAP
+        cop_map = getattr(manifest, "cop_map", None) or DEFAULT_COP_MAP
         return _piecewise_cop(cop_map, temp)

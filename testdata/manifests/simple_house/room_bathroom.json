@@ -1,0 +1,48 @@
+{
+  "type": "room",
+  "device_id": "bathroom",
+  "name": "Bathroom",
+  "floor_area_m2": 8.0,
+  "thermal_mass_kwh_per_k": 1.2,
+  "u_value_w_per_m2k": 0.45,
+  "window_area_m2": 1.0,
+  "south_facing_windows": false,
+  "insulation_class": "medium",
+  "constraint_endpoints": {
+    "hold_temp_band": ">=1"
+  },
+  "actions": {
+    "heat": {
+      "script": "script.bathroom_heat_on",
+      "verify": {
+        "entity": "climate.bathroom",
+        "expected": "== heat",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    },
+    "idle": {
+      "script": "script.bathroom_heat_off",
+      "verify": {
+        "entity": "climate.bathroom",
+        "expected": "== off",
+        "within_seconds": 30
+      },
+      "timeout_seconds": 60
+    }
+  },
+  "safe_default": {
+    "script": "script.bathroom_safe_default",
+    "description": "Let factory thermostat take over at 18°C",
+    "verify": {
+      "entity": "climate.bathroom",
+      "expected": "== heat",
+      "within_seconds": 60
+    },
+    "timeout_seconds": 120
+  },
+  "cost_function": {
+    "type": "linear",
+    "parameters": {"cost_per_kwh": 0.30}
+  }
+}

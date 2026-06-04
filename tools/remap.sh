@@ -13,9 +13,17 @@ Run the cartographer skill (cartographer-marketplace:cartographer) on this two-r
 Map both repos: hemm/ (core, home base — pure Python, specs/, .specify/, tools/) and
 ha-hemm/ (HA integration, custom_components/hemm/, tests/integration/).
 Write the result to ${OUT}, replacing current contents.
-Cover: topology, key modules, Phase 7 actuator/verification engine, FR statuses from
-hemm/specs/, gate tooling, container test setup. The file is gitignored in both repos
+Cover: topology, key modules, the primitive component model (manifest.to_components ->
+source/sink/storage/converter/node; both solver backends build from primitives, no
+named-type dispatch), the actuator/verification engine, FR statuses from hemm/specs/,
+gate tooling, container test setup. The file is gitignored in both repos
 — do not stage or commit.
 EOF
 
-exec claude -p "$PROMPT" --add-dir "$WORKSPACE/hemm" --add-dir "$WORKSPACE/ha-hemm"
+# Headless run needs write permission, or the cartographer skill generates the map
+# in-context but its Write calls are denied (it then reports success without
+# persisting). acceptEdits auto-accepts only file edits (the one thing a doc-regen
+# needs) without bypassing other permission checks.
+exec claude -p "$PROMPT" \
+  --permission-mode acceptEdits \
+  --add-dir "$WORKSPACE/hemm" --add-dir "$WORKSPACE/ha-hemm"

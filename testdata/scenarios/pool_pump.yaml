@@ -1,0 +1,29 @@
+# Pool pump thesis scenario — a brand-new named type plans via SinkSpec.
+name: pool_pump
+description: >
+  Pool pump with a minimum daily circulation energy target and dynamic tariff.
+horizon_hours: 4
+resolution_minutes: 60
+days: 1
+tags:
+  - thesis
+  - pool_pump
+expected_solve_time_seconds: 1.0
+
+price_profile: default
+price_params:
+  base_price: 0.30
+  peak_price: 0.60
+  off_peak_price: 0.10
+
+manifests:
+  - ../manifests/simple_house/pool_pump.json
+
+constraint_windows:
+  - window_id: pool_pump_min_energy
+    device_id: pool_pump
+    deadline: "2030-01-01T04:00:00+00:00"
+    requirement:
+      type: min_energy_until
+      min_energy_kwh: 1.2
+    priority_penalty: 3.0

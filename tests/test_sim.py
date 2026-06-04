@@ -93,6 +93,14 @@ class TestScenarioLoading:
         assert "onboarding" in scenario.tags
 
     @pytest.mark.unit
+    @pytest.mark.req("003:FR-012")
+    def test_pool_pump_scenario_loads(self) -> None:
+        path = SCENARIOS_DIR / "pool_pump.yaml"
+        scenario = load_scenario(path)
+        assert scenario.name == "pool_pump"
+        assert scenario.manifests[0]["type"] == "pool_pump"
+
+    @pytest.mark.unit
     def test_all_six_scenarios_loadable(self) -> None:
         """All 6 standard scenarios load without error."""
         scenario_files = [
@@ -229,3 +237,14 @@ class TestSimRunnerScenarios:
             runner = SimRunner()
             result = runner.run(scenario)
             assert result.success, f"Scenario {name} failed: {result.error}"
+
+    @pytest.mark.slow
+    @pytest.mark.req("003:FR-012")
+    def test_pool_pump_scenario_plans_with_power(self) -> None:
+        path = SCENARIOS_DIR / "pool_pump.yaml"
+        scenario = load_scenario(path)
+        runner = SimRunner()
+        result = runner.run(scenario)
+        assert result.success, result.error
+        plan = next(plan for plan in result.plans if plan.device_id == "pool_pump")
+        assert sum(slot.power_kw for slot in plan.slots) > 0.0
