@@ -21,7 +21,6 @@ from tests._parity import (
     solve_scenario,
 )
 
-
 ACTS_FROM_ZERO_ALLOWLIST = frozenset(
     {
         ("ev_departure", "ev_charger_garage"),
@@ -63,9 +62,7 @@ def test_backend_a_component_build_matches_per_device_golden(scenario: str) -> N
     unexpected_new_devices = allowed_new_devices - scenario_allowlist
     missing_golden_devices = set(golden_devices) - set(current_devices)
     if unexpected_new_devices or missing_golden_devices:
-        diffs.append(
-            f"device set: golden={sorted(golden_devices)} current={sorted(current_devices)}"
-        )
+        diffs.append(f"device set: golden={sorted(golden_devices)} current={sorted(current_devices)}")
 
     if not scenario_allowlist:
         objective_diff = _objective_diff(golden, current)

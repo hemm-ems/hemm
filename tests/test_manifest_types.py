@@ -573,8 +573,8 @@ class TestControlClass:
     def test_control_class_in_all_device_types(self) -> None:
         """Every device type accepts control_class field."""
         from hemm_core.manifest.types import (
-            PVForecastManifest,
             PoolPumpManifest,
+            PVForecastManifest,
             ThermostatLoadManifest,
             WaterHeaterManifest,
         )

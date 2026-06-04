@@ -15,18 +15,18 @@ import pytest
 
 from hemm_core.manifest.components import ComponentSpec, ConverterSpec
 from hemm_core.manifest.types import (
-    _ManifestBase,
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
     ManifestType,
-    PVForecastManifest,
     PassiveLoadManifest,
     PoolPumpManifest,
     Primitive,
+    PVForecastManifest,
     RoomManifest,
     ThermostatLoadManifest,
     WaterHeaterManifest,
+    _ManifestBase,
 )
 from hemm_core.manifest.validator import validate_manifest
 from hemm_core.sim.scenario import load_scenario

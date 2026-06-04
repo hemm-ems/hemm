@@ -1,5 +1,15 @@
 """HEMM manifest schema — declarative device self-description."""
 
+from hemm_core.manifest.components import (
+    DEFAULT_COP_MAP,
+    ComponentSpec,
+    ConverterSpec,
+    NodeSpec,
+    Primitive,
+    SinkSpec,
+    SourceSpec,
+    StorageSpec,
+)
 from hemm_core.manifest.constraints import (
     ConstraintType,
     ConstraintVersion,
@@ -11,16 +21,6 @@ from hemm_core.manifest.constraints import (
     MinRuntimePerDay,
     MinSocUntil,
     ReachMinTempOnce,
-)
-from hemm_core.manifest.components import (
-    ComponentSpec,
-    ConverterSpec,
-    DEFAULT_COP_MAP,
-    NodeSpec,
-    Primitive,
-    SinkSpec,
-    SourceSpec,
-    StorageSpec,
 )
 from hemm_core.manifest.messages import (
     ConstraintWindow,
@@ -53,6 +53,7 @@ from hemm_core.manifest.validator import ValidationError, validate_manifest
 from hemm_core.manifest.version import VersionSpecifier, check_version
 
 __all__ = [
+    "DEFAULT_COP_MAP",
     "Action",
     "BatteryManifest",
     "ComponentSpec",
@@ -63,7 +64,6 @@ __all__ = [
     "ControlClass",
     "ConverterSpec",
     "CostFunction",
-    "DEFAULT_COP_MAP",
     "DeviceManifest",
     "EVChargerManifest",
     "ForbiddenWindow",
@@ -77,13 +77,13 @@ __all__ = [
     "NodeSpec",
     "PVForecastManifest",
     "PassiveLoadManifest",
-    "PoolPumpManifest",
     "PlanMessage",
     "PlanReason",
     "PlanSlot",
-    "Primitive",
+    "PoolPumpManifest",
     "PriceMessage",
     "PriceSlot",
+    "Primitive",
     "ReachMinTempOnce",
     "RetryPolicy",
     "RoomManifest",

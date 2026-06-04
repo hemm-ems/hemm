@@ -576,7 +576,7 @@ class CompositeConsumer(ConsumerModel):
 
     @property
     def device_id(self) -> str:
-        return self._manifest.device_id
+        return str(self._manifest.device_id)
 
     @property
     def device_type(self) -> Any:
