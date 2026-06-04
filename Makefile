@@ -1,4 +1,4 @@
-.PHONY: test test-container test-container-sc test-pi test-slow ci ci-full lint format build clean check-clock branding-audit req-coverage gate remap
+.PHONY: test test-container test-container-sc test-pi test-slow ci ci-full lint format build clean check-clock branding-audit req-coverage gate remap hooks
 
 ## Default: fast unit tests only
 test:
@@ -28,6 +28,12 @@ test-slow:
 
 ## CI minimum: lint + type check + clock audit + unit tests
 ci: lint typecheck check-clock test
+
+## Enable the opt-in pre-push hook (runs `make ci` before every push).
+## One-time per clone. Disable with: git config --unset core.hooksPath
+hooks:
+	git config core.hooksPath .githooks
+	@echo "pre-push hook enabled (runs 'make ci'). Skip a push with: git push --no-verify"
 
 ## Time-warp audit: forbid direct `datetime.now`/`time.monotonic`/`dt_util.utcnow`
 ## in domain code. Whitelist: hemm/time/, CLI entry points.
