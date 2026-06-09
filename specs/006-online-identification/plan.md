@@ -38,15 +38,41 @@ ha-hemm/custom_components/hemm/identification.py   # ABC, 7 identifiers (stubs),
 # keep HA repair-issue + sensor wiring in ha-hemm.
 ```
 
-**Structure Decision**: Open. Recommended: pure estimators in core, HA surface in
-integration — coordinate with the concept doc's intended layout.
+**Structure Decision**: RESOLVED (2026-06-09) — pure estimators go in core
+(`hemm/src/hemm_core/identification/`), HA keeps repair-issue + sensor wiring.
+Driver: the room model (FR-007) reuses the core occupant `ExogenousForecast`
+(`sim/exogenous.py`), so it must live core-side; this also gives SR-011 its first
+FR trace.
 
 ## Open Work (drives tasks.md)
 
-- **FR-003** estimators per device type (RC thermal ID first — the hardest and
-  most valuable; budget for ≥ 50 % rejection in practice per roast #6).
+- **FR-007** multi-input room grey-box RC model (sun / occupancy / insulation) in
+  core, consuming `ThermalObservation` + reusing `ExogenousForecast`. The hardest
+  and most valuable estimator — build first.
+- **FR-008** identifiability ladder (1R1C → +solar → +occupancy), conservative
+  gating; budget for ≥ 50 % rejection per roast #6.
+- **FR-009** `predict_demand(horizon) -> ExogenousForecast` feeding the solver.
+- **FR-003** remaining estimators per device type (HP COP, tank loss, battery
+  efficiency, PV bias).
 - **FR-004/005** repair-issue confirmation flow + `model_confidence` sensor.
 - **FR-006** default-off + manual trigger.
+
+## Cross-feature note
+
+The `occupants-demand-sim` work (core PR #3 / ha-hemm PR #6) was the **generative**
+counterpart: occupant profiles → `ExogenousForecast` → solver. Those PRs were
+**closed as superseded (2026-06-09)** — they forked before the 003 component-model
+refactor and their solver hooks (typed `RoomManifest` RC) can't merge onto the
+generic `_add_node`. Their additive code (`sim/occupants/*`, `exogenous.py`,
+synthetic profiles, tests) is salvageable on the undeleted `occupants-demand-sim`
+branch.
+
+This feature absorbs the generative side as its **inverse** (history → parameters
+→ `ExogenousForecast`). FR-007 re-cuts the `ExogenousForecast` / `ThermalObservation`
+contracts **fresh against the component model** (reusing the closed branch's
+dataclasses as a starting point, not merging them), and FR-009 builds the
+exogenous→solver wiring on `_add_node` directly — the port PR #3 could not do.
+The simulator's synthetic profiles serve as SC-005 ground truth.
 
 ## Complexity Tracking
 

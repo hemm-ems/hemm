@@ -22,6 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "numpy>=1.26",
     "pydantic>=2.7",
     "pyomo>=6.7",
     "highspy>=1.7",
