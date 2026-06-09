@@ -15,8 +15,8 @@ description: "Task list for 006 Online Identification"
 ## Phase 2: Room thermal model — FR-007/008/009 (⬜)
 
 - [X] T004 DECISION: estimators in core `hemm/src/hemm_core/identification/` (RESOLVED — see plan.md)
-- [ ] T005 Define `ThermalObservation` input + reuse `sim/exogenous.py` `ExogenousForecast` — core
-- [ ] T006 Implement multi-input grey-box RC room estimator `{R, C, A_sol, Q_occ}` (FR-007) — core
+- [X] T005 Define `ThermalObservation` input — core (`identification/thermal.py`); `ExogenousForecast` output deferred to FR-009/T008
+- [X] T006 Implement multi-input grey-box RC room estimator `{R, C, A_sol, Q_occ}` (FR-007) — core, least-squares, unit-tested (4 tests)
 - [ ] T007 Identifiability ladder: 1R1C → +solar → +occupancy, info/condition gate, per-term confidence (FR-008)
 - [ ] T008 [P] `predict_demand(horizon) -> ExogenousForecast` (FR-009)
 - [ ] T009 [P] Synthetic-trajectory tests: recover known params from `sim/occupants` ground truth (SC-005); 1R1C-only fallback (SC-006)

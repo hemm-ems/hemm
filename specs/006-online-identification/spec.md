@@ -71,17 +71,18 @@ identifier whose `identify(observations)` runs and returns either an
 - **FR-006** `⬜ todo` `SR-010`: Online-ID MUST ship **disabled by default** with a manual
   "try identifying my <device>" trigger, not background-on. *(Source: roast
   recommendation #7 — lower surface area until real inputs are seen.)*
-- **FR-007** `⬜ todo` `SR-011` `SR-010`: The room identifier MUST be a **multi-input
+- **FR-007** `✅ done` `unit` `SR-011` `SR-010`: The room identifier MUST be a **multi-input
   grey-box RC thermal model** `C·dT/dt = (T_out−T_in)/R + A_sol·I_solar +
   Q_occ·presence + Q_heat`, identifying `{R (insulation), C (thermal mass),
-  A_sol (solar aperture), Q_occ (per-occupant gain)}`. The pure estimator MUST
-  live in **core** (`hemm/src/hemm_core/identification/`), consuming a defined
-  `ThermalObservation` series (indoor temp, outdoor temp, solar irradiance,
-  occupancy/internal gains, heat actuation) and using a single `ExogenousForecast`
-  contract for the presence / internal-gain inputs — re-cut against the 003
-  component model (starting from the closed `occupants-demand-sim` branch's
-  `sim/exogenous.py` dataclasses), not a parallel one. *(Resolves the plan's T004
-  core-vs-integration decision and gives SR-011 its first FR trace.)*
+  A_sol (solar aperture), Q_occ (per-occupant gain)}`. The pure estimator lives in
+  **core** (`src/hemm_core/identification/thermal.py`): `identify_room_thermal`
+  consumes a `ThermalObservation` series (indoor temp, outdoor temp, solar
+  irradiance, presence/internal gains, heat input) and recovers the parameters via
+  a single least-squares fit that mirrors the solver's discrete RC update,
+  returning a `RoomThermalModel` + `IdentificationResult` (or `None` on poor
+  data). *(Resolves the plan's T004 core-vs-integration decision and gives SR-011
+  its first FR trace. The `ExogenousForecast` output contract is re-cut under
+  FR-009.)*
 - **FR-008** `⬜ todo` `SR-010`: Estimation MUST follow an **identifiability ladder** —
   1R1C heat-only `{R,C}` → +solar `A_sol` → +occupancy `Q_occ` — climbing a rung
   only when the data supports that term (information / condition-number gate),
