@@ -72,10 +72,11 @@ enters HEMM. Preconditions stay in HA.
   solve whose termination status and per-device plan surface through HA.
 - **FR-003** `✅ done` `SR-003`: `hemm.set_solver` MUST switch the active backend
   at runtime (firing `solver_switched`), default `milp_central`.
-- **FR-004** `🔶 partial` `SR-003`: HEMM MUST re-plan automatically on the
-  periodic tick. *(Gap: the 15-min `update_interval` only refreshes cached data;
-  it does NOT run the solver. A real periodic solve must currently be driven by
-  an external automation calling `hemm.tick`. Wire a scheduled solve.)*
+- **FR-004** `✅ done` `unit` `SR-003`: HEMM MUST re-plan automatically on the
+  periodic tick. *(`_async_update_data` — driven by the 15-min `update_interval`
+  and any `async_request_refresh` — schedules `_run_solver_background` →
+  `async_run_solver`, so a scheduled tick runs a real solve with no external
+  `hemm.tick` automation. Proven by `test_auto_solve.py::test_update_data_runs_solver`.)*
 - **FR-005** `🔶 partial` `SR-003`: Each solve MUST feed the previous plans back
   in (rolling-horizon continuity) and record an `iteration_complete` event.
   *(Built in `async_run_solver`; no test asserts plan continuity across ticks —
@@ -113,7 +114,7 @@ enters HEMM. Preconditions stay in HA.
   and fire the right events (covers FR-006/007).
 - **SC-003** `✅`: Every side-effecting service called with `dry_run: true`
   leaves state unchanged (covers FR-008).
-- **SC-004** `⬜`: A scheduled tick triggers a solve with no external automation
+- **SC-004** `✅`: A scheduled tick triggers a solve with no external automation
   (closes FR-004).
 - **SC-005** `✅`: A manual price curve set via `set_price_curve` is returned by
   `_get_price_forecast` ahead of the adapter (covers FR-010).
