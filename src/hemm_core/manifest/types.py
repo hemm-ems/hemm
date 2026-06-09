@@ -85,6 +85,12 @@ class Action(BaseModel):
     """An actuator action with verification contract."""
 
     script: str = Field(description="HA script entity to call")
+    writes_entity: str | None = Field(
+        default=None,
+        description=(
+            "HA entity_id that this action's script writes directly, used to detect self-confirming verification"
+        ),
+    )
     verify: VerificationContract | None = None
     timeout_seconds: float = Field(default=300, gt=0)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -37,6 +38,10 @@ class ValidationError(Exception):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         super().__init__(f"Manifest validation failed: {'; '.join(errors)}")
+
+
+class ManifestWarning(UserWarning):
+    """Warning for manifest contracts that validate but carry safety risks."""
 
 
 _TYPE_TO_MODEL: dict[str, type[Any]] = {
@@ -103,7 +108,26 @@ def validate_manifest(data: dict[str, Any]) -> DeviceManifest:
     if errors:
         raise ValidationError(errors)
 
+    for warning_msg in manifest_warnings(manifest):
+        warnings.warn(warning_msg, ManifestWarning, stacklevel=2)
+
     return manifest  # type: ignore[no-any-return]
+
+
+def manifest_warnings(manifest: DeviceManifest) -> list[str]:
+    """Return non-fatal manifest warnings that should be surfaced loudly."""
+    messages: list[str] = []
+    actions = [("safe_default", manifest.safe_default), *manifest.actions.items()]
+    for action_name, action in actions:
+        if action.verify is None or action.writes_entity is None:
+            continue
+        if action.verify.entity == action.writes_entity:
+            messages.append(
+                f"Action '{action_name}' has self-confirming verification: verify.entity "
+                f"'{action.verify.entity}' matches writes_entity. This contract cannot detect "
+                "a silently ignored write."
+            )
+    return messages
 
 
 def _validate_constraint_endpoints(endpoints: dict[str, str]) -> list[str]:

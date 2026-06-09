@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
-from hemm_core.manifest.validator import ValidationError, validate_manifest
+from hemm_core.manifest.validator import ManifestWarning, ValidationError, validate_manifest
 
 
 @pytest.mark.req("001:FR-001", "001:FR-003")
@@ -136,6 +138,92 @@ class TestConstraintEndpointValidation:
                     "safe_default": {"script": "script.safe"},
                 }
             )
+
+
+@pytest.mark.req("001:FR-013")
+class TestVerifyIndependence:
+    """Tests for warning on self-confirming verification contracts."""
+
+    @pytest.mark.unit
+    def test_verify_entity_matching_writes_entity_warns(self) -> None:
+        with pytest.warns(ManifestWarning, match="self-confirming verification"):
+            validate_manifest(
+                {
+                    "type": "battery",
+                    "device_id": "bat1",
+                    "name": "Battery",
+                    "capacity_kwh": 10.0,
+                    "max_charge_kw": 5.0,
+                    "max_discharge_kw": 5.0,
+                    "actions": {
+                        "charge": {
+                            "script": "script.bat_charge",
+                            "writes_entity": "sensor.battery_soc",
+                            "verify": {
+                                "entity": "sensor.battery_soc",
+                                "expected": ">= 60",
+                                "within_seconds": 30,
+                            },
+                        }
+                    },
+                    "safe_default": {"script": "script.bat_safe"},
+                }
+            )
+
+    @pytest.mark.unit
+    def test_independent_verify_entity_does_not_warn(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_manifest(
+                {
+                    "type": "battery",
+                    "device_id": "bat1",
+                    "name": "Battery",
+                    "capacity_kwh": 10.0,
+                    "max_charge_kw": 5.0,
+                    "max_discharge_kw": 5.0,
+                    "actions": {
+                        "charge": {
+                            "script": "script.bat_charge",
+                            "writes_entity": "switch.battery_charge",
+                            "verify": {
+                                "entity": "sensor.battery_soc",
+                                "expected": ">= 60",
+                                "within_seconds": 30,
+                            },
+                        }
+                    },
+                    "safe_default": {"script": "script.bat_safe"},
+                }
+            )
+        assert not any(isinstance(item.message, ManifestWarning) for item in caught)
+
+    @pytest.mark.unit
+    def test_unset_writes_entity_does_not_warn(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validate_manifest(
+                {
+                    "type": "battery",
+                    "device_id": "bat1",
+                    "name": "Battery",
+                    "capacity_kwh": 10.0,
+                    "max_charge_kw": 5.0,
+                    "max_discharge_kw": 5.0,
+                    "actions": {
+                        "charge": {
+                            "script": "script.bat_charge",
+                            "verify": {
+                                "entity": "sensor.battery_soc",
+                                "expected": ">= 60",
+                                "within_seconds": 30,
+                            },
+                        }
+                    },
+                    "safe_default": {"script": "script.bat_safe"},
+                }
+            )
+        assert not any(isinstance(item.message, ManifestWarning) for item in caught)
 
 
 @pytest.mark.req("001:FR-012")

@@ -156,14 +156,12 @@ and a bad manifest and check exit codes.
   constraint, and message types, and provide a `hemm validate` CLI.
 - **FR-012** `✅ done` `SR-006`: The validator MUST NOT silently swallow unknown fields;
   errors are collected and reported together with clear locations.
-- **FR-013** `🔶 partial` `unit` `SR-009`: The validator MUST warn (loudly) when an action's
+- **FR-013** `✅ done` `unit` `SR-009`: The validator MUST warn (loudly) when an action's
   `verify.entity` is the same entity that the action's own `script` writes
   through directly, because such a contract is self-confirming and cannot detect
   a silently-ignored write. *(Source: `local-concept-roast.md` weakness #4.)*
   Implemented via an optional `Action.writes_entity` field and
   `manifest_warnings()` / `ManifestWarning` (emitted during `validate_manifest`).
-  *(Gap: the `TestVerifyIndependence` test was removed during the core's
-  `hemm_core` restructuring — code remains, but the proving test must be restored.)*
 
 ### Key Entities
 
