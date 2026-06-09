@@ -12,24 +12,33 @@ description: "Task list for 006 Online Identification"
 - [X] T002 [US1] 7 stub identifiers (one per device type) — `identification.py`
 - [X] T003 [US1] `IDENTIFIER_REGISTRY` + `get_identifier` (warns on unknown) — `identification.py`
 
-## Phase 2: Layout decision + estimators — FR-003 (🔶→⬜)
+## Phase 2: Room thermal model — FR-007/008/009 (⬜)
 
-- [ ] T004 DECISION: estimators in core `hemm/src/hemm/identification/` vs stay in integration
-- [ ] T005 Implement Room RC thermal-model identifier (first; highest value/risk)
-- [ ] T006 Implement HP COP-curve, tank loss, battery efficiency, PV bias identifiers
-- [ ] T007 [P] Synthetic-trajectory tests with known ground truth + tolerance (SC-002)
+- [X] T004 DECISION: estimators in core `hemm/src/hemm_core/identification/` (RESOLVED — see plan.md)
+- [ ] T005 Define `ThermalObservation` input + reuse `sim/exogenous.py` `ExogenousForecast` — core
+- [ ] T006 Implement multi-input grey-box RC room estimator `{R, C, A_sol, Q_occ}` (FR-007) — core
+- [ ] T007 Identifiability ladder: 1R1C → +solar → +occupancy, info/condition gate, per-term confidence (FR-008)
+- [ ] T008 [P] `predict_demand(horizon) -> ExogenousForecast` (FR-009)
+- [ ] T009 [P] Synthetic-trajectory tests: recover known params from `sim/occupants` ground truth (SC-005); 1R1C-only fallback (SC-006)
+
+## Phase 2b: Remaining device estimators — FR-003 (🔶→⬜)
+
+- [ ] T010 Implement HP COP-curve, tank loss, battery efficiency, PV bias identifiers (core)
+- [ ] T011 [P] Synthetic-trajectory tests with known ground truth + tolerance (SC-002)
 
 ## Phase 3: Consent + transparency surface — FR-004/005 (⬜)
 
-- [ ] T008 Raise a repair issue on significant change; apply only after confirmation
-- [ ] T009 Expose `sensor.hemm_<device>_model_confidence`
-- [ ] T010 [P] Tests: significant change → repair issue, not auto-applied (SC-003)
+- [ ] T012 Raise a repair issue on significant change; apply only after confirmation
+- [ ] T013 Expose `sensor.hemm_<device>_model_confidence`
+- [ ] T014 [P] Tests: significant change → repair issue, not auto-applied (SC-003)
 
 ## Phase 4: Safe rollout — FR-006 (⬜)
 
-- [ ] T011 Default-off + manual "try identifying my <device>" trigger (roast #7)
-- [ ] T012 [P] Test: no identification runs until trigger fires (SC-004)
+- [ ] T015 Default-off + manual "try identifying my <device>" trigger (roast #7)
+- [ ] T016 [P] Test: no identification runs until trigger fires (SC-004)
 
 ## Dependencies
 
-- T004 blocks T005–T007. T005/T006 block T008. Phase 1 complete.
+- T004 RESOLVED. T005 blocks T006; T006 blocks T007/T008/T009. T006/T010 block T012.
+- FR-007 reuses `sim/exogenous.py` from `occupants-demand-sim` (core PR #3) —
+  stabilise that contract first. Phase 1 complete.
