@@ -126,6 +126,9 @@ class MILPCentralSolver:
         storage_components = {
             component.device_id: component for component in components if isinstance(component, StorageSpec)
         }
+        direct_storage_ids = [
+            component.device_id for component in storage_components.values() if component.node is None
+        ]
         node_components = {
             component.device_id: component for component in components if isinstance(component, NodeSpec)
         }
@@ -145,6 +148,11 @@ class MILPCentralSolver:
                 [(d, t) for d in storage_components for t in range(n_slots + 1)],
                 domain=pyo.NonNegativeReals,
             )
+        if direct_storage_ids:
+            direct_storage_index = [(d, t) for d in direct_storage_ids for t in range(n_slots)]
+            model.power_charge = pyo.Var(direct_storage_index, domain=pyo.NonNegativeReals)
+            model.power_discharge = pyo.Var(direct_storage_index, domain=pyo.NonNegativeReals)
+            model.b_charge = pyo.Var(direct_storage_index, domain=pyo.Binary)
 
         outdoor_temps = self._align_weather(weather_forecast, n_slots)
         if node_components:
@@ -292,7 +300,8 @@ class MILPCentralSolver:
 
     def _add_source(self, model: pyo.ConcreteModel, component: ComponentSpec, n_slots: int) -> None:
         """Add a source primitive. PV remains pinned to zero when no forecast is supplied."""
-        assert isinstance(component, SourceSpec)
+        if not isinstance(component, SourceSpec):
+            raise TypeError(f"Expected SourceSpec, got {type(component).__name__}")
         forecast = component.forecast or [0.0] * n_slots
         for t in model.T:
             upper = forecast[int(t)] if int(t) < len(forecast) else forecast[-1]
@@ -302,7 +311,8 @@ class MILPCentralSolver:
 
     def _add_sink(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
         """Add a controllable or fixed sink primitive."""
-        assert isinstance(component, SinkSpec)
+        if not isinstance(component, SinkSpec):
+            raise TypeError(f"Expected SinkSpec, got {type(component).__name__}")
         self._add_power_bounds(model, component.device_id, component.min_power_kw, component.max_power_kw)
 
     def _add_storage(
@@ -313,11 +323,28 @@ class MILPCentralSolver:
         resolution_minutes: int,
     ) -> None:
         """Add storage level recursion and direct electrical bounds where applicable."""
-        assert isinstance(component, StorageSpec)
+        if not isinstance(component, StorageSpec):
+            raise TypeError(f"Expected StorageSpec, got {type(component).__name__}")
         if component.node is None:
             upper = component.max_charge_kw if component.max_charge_kw is not None else 0.0
             lower = 0.0 if component.charge_only else -component.max_discharge_kw
             self._add_power_bounds(model, component.device_id, lower, upper)
+            max_charge = component.max_charge_kw if component.max_charge_kw is not None else 0.0
+            max_discharge = 0.0 if component.charge_only else component.max_discharge_kw
+            for t in model.T:
+                model.component_constraints.add(
+                    model.power[component.device_id, t]
+                    == model.power_charge[component.device_id, t] - model.power_discharge[component.device_id, t]
+                )
+                model.component_constraints.add(model.power_charge[component.device_id, t] <= max_charge)
+                model.component_constraints.add(model.power_discharge[component.device_id, t] <= max_discharge)
+                model.component_constraints.add(
+                    model.power_charge[component.device_id, t] <= max_charge * model.b_charge[component.device_id, t]
+                )
+                model.component_constraints.add(
+                    model.power_discharge[component.device_id, t]
+                    <= max_discharge * (1 - model.b_charge[component.device_id, t])
+                )
 
         if component.capacity is None:
             return
@@ -330,7 +357,12 @@ class MILPCentralSolver:
             model.component_constraints.add(
                 model.soc[component.device_id, t + 1]
                 == model.soc[component.device_id, t]
-                + model.power[component.device_id, t] * dt_hours * component.charge_efficiency
+                + (
+                    model.power_charge[component.device_id, t] * dt_hours * component.charge_efficiency
+                    - model.power_discharge[component.device_id, t] * dt_hours / component.discharge_efficiency
+                    if component.node is None
+                    else model.power[component.device_id, t] * dt_hours * component.charge_efficiency
+                )
                 - leakage * dt_hours
             )
             model.component_constraints.add(model.soc[component.device_id, t + 1] >= component.min_level)
@@ -339,7 +371,8 @@ class MILPCentralSolver:
 
     def _add_converter(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
         """Add converter input-power bounds; thermal injection is consumed by node builders."""
-        assert isinstance(component, ConverterSpec)
+        if not isinstance(component, ConverterSpec):
+            raise TypeError(f"Expected ConverterSpec, got {type(component).__name__}")
         self._add_power_bounds(model, component.device_id, 0.0, component.max_input_kw)
 
     def _add_node(
@@ -352,7 +385,8 @@ class MILPCentralSolver:
         resolution_minutes: int,
     ) -> None:
         """Add the RC balance for a thermal node."""
-        assert isinstance(component, NodeSpec)
+        if not isinstance(component, NodeSpec):
+            raise TypeError(f"Expected NodeSpec, got {type(component).__name__}")
         if component.quantity != "thermal":
             return
 
@@ -423,12 +457,14 @@ class MILPCentralSolver:
                 # Device must not operate during this window (up to deadline)
                 for t in range(min(deadline_slot + 1, n_slots)):
                     model.constraint_windows.add(model.on[cw.device_id, t] == 0)
+                    model.constraint_windows.add(model.power[cw.device_id, t] == 0)
 
             elif isinstance(req, MinSocUntil):
                 # Storage level must be >= target by deadline.
                 if "level" in state_vars_by_device[cw.device_id]:
                     storage = storage_components[cw.device_id]
-                    assert storage.capacity is not None
+                    if storage.capacity is None:
+                        raise ValueError(f"Storage capacity is required for {cw.device_id}")
                     target_kwh = storage.capacity * req.min_soc_pct / 100.0
                     if deadline_slot < n_slots:
                         model.constraint_windows.add(model.soc[cw.device_id, deadline_slot + 1] >= target_kwh)
@@ -475,11 +511,13 @@ class MILPCentralSolver:
             elif isinstance(req, MinRuntimePerDay):
                 # Sum of on-variables must be >= min_hours / resolution
                 min_slots = int(req.min_hours * 60 / resolution_minutes)
-                model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in model.T) >= min_slots)
+                window_slots = range(min(deadline_slot + 1, n_slots))
+                model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in window_slots) >= min_slots)
 
             elif isinstance(req, MaxRuntimePerDay):
                 max_slots = int(req.max_hours * 60 / resolution_minutes)
-                model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in model.T) <= max_slots)
+                window_slots = range(min(deadline_slot + 1, n_slots))
+                model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in window_slots) <= max_slots)
 
     @staticmethod
     def _state_vars_by_device(components_by_device: dict[str, list[ComponentSpec]]) -> dict[str, set[str]]:

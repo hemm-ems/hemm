@@ -179,6 +179,82 @@ class TestMILPCentralSolver:
         assert len(result.plans[0].slots) == 96
 
     @pytest.mark.unit
+    def test_battery_efficiency_applies_to_charge_and_discharge(self) -> None:
+        """Battery SoC loses energy on both charge and discharge legs."""
+        solver = MILPCentralSolver()
+        battery = BatteryManifest(
+            device_id="lossy_battery",
+            name="Lossy Battery",
+            capacity_kwh=2.0,
+            max_charge_kw=1.0,
+            max_discharge_kw=1.0,
+            charge_efficiency=0.9,
+            discharge_efficiency=0.9,
+            min_soc_pct=0,
+            max_soc_pct=100,
+            safe_default={
+                "script": "script.battery_safe",
+                "verify": {"entity": "sensor.bat", "expected": "== 0", "within_seconds": 30},
+            },
+        )
+        t0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
+        prices = [(t0, -1.0), (t0 + timedelta(hours=1), 1.0)]
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=120,
+            resolution_minutes=60,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        powers = [slot.power_kw for slot in result.plans[0].slots]
+        assert powers[0] == pytest.approx(1.0)
+        assert powers[1] == pytest.approx(-1.0)
+
+        soc = [1.0]
+        for power in powers:
+            if power >= 0.0:
+                soc.append(soc[-1] + power * 0.9)
+            else:
+                soc.append(soc[-1] + power / 0.9)
+        assert soc[1] == pytest.approx(1.9)
+        assert soc[2] == pytest.approx(1.9 - (1.0 / 0.9))
+
+    @pytest.mark.unit
+    def test_battery_does_not_charge_and_discharge_simultaneously(self) -> None:
+        """Negative prices cannot be exploited by wasting energy at full SoC."""
+        solver = MILPCentralSolver()
+        battery = BatteryManifest(
+            device_id="full_battery",
+            name="Full Battery",
+            capacity_kwh=2.0,
+            max_charge_kw=1.0,
+            max_discharge_kw=1.0,
+            charge_efficiency=0.9,
+            discharge_efficiency=0.9,
+            min_soc_pct=0,
+            max_soc_pct=50,
+            safe_default={
+                "script": "script.battery_safe",
+                "verify": {"entity": "sensor.bat", "expected": "== 0", "within_seconds": 30},
+            },
+        )
+        prices = _make_price_forecast(1, base=-1.0)
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=60,
+            resolution_minutes=60,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.plans[0].slots[0].power_kw == pytest.approx(0.0)
+
+    @pytest.mark.unit
     def test_solve_with_min_soc_constraint(self) -> None:
         """Solver respects min_soc_until constraint."""
         solver = MILPCentralSolver()
@@ -268,6 +344,34 @@ class TestMILPCentralSolver:
             assert abs(slot.power_kw) < 0.01
 
     @pytest.mark.unit
+    def test_forbidden_window_for_storage_forces_zero_power(self) -> None:
+        """ForbiddenWindow pins storage power to zero, not just on=0."""
+        solver = MILPCentralSolver()
+        battery = _make_battery()
+        t0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
+        prices = [(t0 + timedelta(hours=i), -1.0) for i in range(4)]
+        cw = ConstraintWindow(
+            window_id="battery_forbidden",
+            device_id="test_battery",
+            deadline=t0 + timedelta(hours=1),
+            requirement=ForbiddenWindow(),
+            priority_penalty=5.0,
+            created_at=t0,
+        )
+
+        result = solver.solve(
+            manifests=[battery],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=240,
+            resolution_minutes=60,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        for slot in result.plans[0].slots[:2]:
+            assert slot.power_kw == pytest.approx(0.0)
+
+    @pytest.mark.unit
     def test_solve_with_min_runtime(self) -> None:
         """Solver satisfies minimum runtime constraint."""
         solver = MILPCentralSolver()
@@ -297,6 +401,34 @@ class TestMILPCentralSolver:
         plan = result.plans[0]
         active_slots = sum(1 for s in plan.slots if s.mode == "active")
         assert active_slots >= 24
+
+    @pytest.mark.unit
+    def test_min_runtime_deadline_limits_counted_slots(self) -> None:
+        """MinRuntimePerDay must be satisfied before its deadline slot."""
+        solver = MILPCentralSolver()
+        hp = _make_heat_pump()
+        prices = _make_price_forecast(8)
+        t0 = prices[0][0]
+        cw = ConstraintWindow(
+            window_id="hp_runtime_deadline",
+            device_id="test_hp",
+            deadline=t0 + timedelta(minutes=45),
+            requirement=MinRuntimePerDay(min_hours=1),
+            priority_penalty=4.0,
+            created_at=t0,
+        )
+
+        result = solver.solve(
+            manifests=[hp],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=120,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        active_slots_before_deadline = sum(1 for s in result.plans[0].slots[:4] if s.mode == "active")
+        assert active_slots_before_deadline >= 4
 
     @pytest.mark.unit
     def test_plan_change_penalty_effect(self) -> None:

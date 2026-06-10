@@ -21,15 +21,7 @@ from tests._parity import (
     solve_scenario,
 )
 
-ACTS_FROM_ZERO_ALLOWLIST = frozenset(
-    {
-        ("ev_departure", "ev_charger_garage"),
-        ("water_heater_legionella", "dhw"),
-        ("full_house", "dhw"),
-        ("onboarding", "ev_charger_garage"),
-        ("onboarding", "bathroom_heater"),
-    }
-)
+ACTS_FROM_ZERO_ALLOWLIST = frozenset()
 
 
 def _objective_diff(golden: dict[str, object], current: dict[str, object]) -> str | None:
