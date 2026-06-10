@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.6.1] - 2026-06-10
+
 ### Changed
 
 - **Primitive component model (spec 003)**: device manifests now compile (`to_components()`) to a fixed set of five physics primitives — `source` / `sink` / `storage` / `converter` / `node`. Both solver backends build from these primitives; no named-device-type `isinstance` dispatch remains in either solver. Adding a device type is now a manifest + mapping, with zero solver code (proven by a `pool_pump` that plans on both backends with the two solver files unchanged).
@@ -18,10 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Primitive` enum** and the `ComponentSpec` family (`SourceSpec`/`SinkSpec`/`StorageSpec`/`ConverterSpec`/`NodeSpec`) in `manifest/components.py`; `ConverterSpec.factor_at(ctx)` generalizes the heat-pump COP curve to any converter.
 - **Constraint-target validation**: a constraint aimed at a state variable a device's primitives do not provide (e.g. `min_soc_until` on a non-storage device) is now rejected with a clear message.
 - **Primitive metadata in the exported schema** (`x-hemm-primitives`) and a `primitives_for_type()` helper — additive; existing manifests validate unchanged.
+- **Grey-box RC room thermal estimator (spec 006, FR-007)**: `identification/thermal.py` fits a multi-input room thermal model (sun/occupancy/insulation) via least squares, reporting fit quality and conditioning diagnostics.
 
 ### Fixed
 
 - Three scenarios carried constraints the old solver silently ignored (two device-id typos, one thermostat with no room); the new validation surfaced them and they are corrected so the constraints actually bind.
+- **Storage discharge efficiency was ignored by both solver backends**, making battery/EV round-trips effectively lossless and plans over-optimistic. The MILP now splits storage power into charge/discharge flows (with a binary preventing simultaneous charge+discharge) and drains SoC at `power/discharge_efficiency`; the distributed backend uses the same convention. Backend-A golden plans recaptured; obsolete parity allowlists retired.
+- **`ForbiddenWindow` now also pins storage power to zero** during the window — previously a battery could still discharge inside a "must not operate" window.
+- **`MinRuntimePerDay`/`MaxRuntimePerDay` respect the constraint-window deadline** instead of silently widening to the full planning horizon.
+- **Thermal identification confidence is gated on conditioning**: an ill-conditioned fit (condition number > 500) now reports confidence 0.0 instead of a high R²-based score with unreliable parameters.
+- Six bare `assert` statements in the MILP solve path replaced with explicit `TypeError`/`ValueError` raises (they vanished under `python -O`).
 
 ## [2026.5.2] - 2026-05-29
 
