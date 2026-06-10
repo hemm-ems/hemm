@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+_MAX_CONDITION_NUMBER = 500.0
+
 
 @dataclass(frozen=True)
 class ThermalObservation:
@@ -119,10 +121,12 @@ def identify_room_thermal(
     if envelope_area_m2 is not None and envelope_area_m2 > 0.0:
         parameter_updates["u_value_w_per_m2k"] = ua_kw_per_k * 1000.0 / envelope_area_m2
 
-    confidence = max(0.0, min(1.0, r_squared))
+    condition_gate_tripped = condition_number > _MAX_CONDITION_NUMBER
+    confidence = 0.0 if condition_gate_tripped else max(0.0, min(1.0, r_squared))
+    gate_message = ", condition gate tripped" if condition_gate_tripped else ""
     message = (
         f"R2={r_squared:.3f}, cond={condition_number:.1f}, "
-        f"C={thermal_mass_kwh_per_k:.2f} kWh/K, UA={ua_kw_per_k:.3f} kW/K"
+        f"C={thermal_mass_kwh_per_k:.2f} kWh/K, UA={ua_kw_per_k:.3f} kW/K{gate_message}"
     )
     return IdentificationResult(
         device_id=device_id,

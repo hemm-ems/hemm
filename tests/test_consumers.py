@@ -222,6 +222,26 @@ class TestStorageConsumer:
         assert all(p >= -storage.max_discharge_kw for p in powers)
 
     @pytest.mark.unit
+    def test_discharge_efficiency_limits_deliverable_energy(self) -> None:
+        actions = StorageConsumer._storage_actions(
+            level=5.0,
+            levels=[1.0, 5.0],
+            dt_hours=1.0,
+            forbidden=set(),
+            slot=0,
+            min_level=1.0,
+            max_level=5.0,
+            max_charge=0.0,
+            max_discharge=10.0,
+            charge_efficiency=0.9,
+            discharge_efficiency=0.9,
+        )
+
+        discharge_actions = [power for power, _ in actions if power < 0.0]
+        assert len(discharge_actions) == 1
+        assert discharge_actions[0] == pytest.approx(-3.6)
+
+    @pytest.mark.unit
     def test_forbidden_window_respected(self) -> None:
         consumer = StorageConsumer(_manifest_stub(), _make_storage())
         cw = ConstraintWindow(
