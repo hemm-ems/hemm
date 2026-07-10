@@ -189,7 +189,7 @@ class StorageConsumer(_PrimitiveConsumer):
             if power >= 0:
                 level += power * dt_hours * storage.charge_efficiency
             else:
-                level += power * dt_hours * storage.discharge_efficiency
+                level += power * dt_hours / storage.discharge_efficiency
             if capacity is not None:
                 upper = max_level if max_level is not None else capacity
                 level = max(min_level, min(upper, level))
@@ -292,14 +292,14 @@ class StorageConsumer(_PrimitiveConsumer):
             candidates.append(min(max_charge, spare / (dt_hours * charge_efficiency)))
         available = max(0.0, level - min_level)
         if available > 0 and max_discharge > 0:
-            candidates.append(-min(max_discharge, available / (dt_hours * discharge_efficiency)))
+            candidates.append(-min(max_discharge, available * discharge_efficiency / dt_hours))
 
         actions: list[tuple[float, int]] = []
         for power in candidates:
             if power >= 0:
                 next_level = level + power * dt_hours * charge_efficiency
             else:
-                next_level = level + power * dt_hours * discharge_efficiency
+                next_level = level + power * dt_hours / discharge_efficiency
             next_level = max(min_level, min(max_level, next_level))
             next_idx = min(range(len(levels)), key=lambda i: abs(levels[i] - next_level))
             actions.append((power, next_idx))

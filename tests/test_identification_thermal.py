@@ -125,3 +125,29 @@ def test_degenerate_no_excitation_returns_none() -> None:
     result = identify_room_thermal(observations, 0.25, device_id="room.flat")
 
     assert result is None
+
+
+@pytest.mark.unit
+@pytest.mark.req("006:FR-007")
+def test_ill_conditioned_fit_returns_zero_confidence() -> None:
+    observations: list[ThermalObservation] = []
+    indoor = 20.0
+    for step in range(26):
+        heat_input = 1.0 + step * 0.001
+        observations.append(
+            ThermalObservation(
+                indoor_temp_c=indoor,
+                outdoor_temp_c=indoor + 4.0 * heat_input,
+                heat_input_kw=heat_input,
+                solar_irradiance_w_m2=2000.0 * heat_input,
+                presence=3.0 * heat_input,
+            )
+        )
+        indoor += 0.01 * heat_input
+
+    result = identify_room_thermal(observations, 0.25, device_id="room.collinear")
+
+    assert result is not None
+    assert result.confidence == 0.0
+    assert result.parameter_updates["thermal_model"].condition_number > 500.0
+    assert "condition gate tripped" in result.message
