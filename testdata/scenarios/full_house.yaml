@@ -34,28 +34,28 @@ manifests:
 constraint_windows:
   - window_id: battery_morning_soc
     device_id: house_battery
-    deadline: "2026-05-07T07:00:00+00:00"
+    deadline_offset_hours: 7
     requirement:
       type: min_soc_until
       min_soc_pct: 60
     priority_penalty: 3.0
   - window_id: ev_departure
     device_id: ev_charger_garage
-    deadline: "2026-05-07T07:30:00+00:00"
+    deadline_offset_hours: 7.5
     requirement:
       type: min_energy_until
       min_energy_kwh: 25.0
     priority_penalty: 7.0
   - window_id: hp_runtime
     device_id: heat_pump_main
-    deadline: "2026-05-07T23:59:00+00:00"
+    deadline_offset_hours: 23.98
     requirement:
       type: min_runtime_per_day
       min_hours: 4
     priority_penalty: 4.0
   - window_id: wh_legionella
     device_id: dhw
-    deadline: "2026-05-07T23:59:00+00:00"
+    deadline_offset_hours: 23.98
     requirement:
       type: reach_min_temp_once
       target_temp_c: 60.0

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from hemm_core.manifest.messages import ConstraintWindow
 
 
 @dataclass
@@ -27,8 +30,29 @@ class Scenario:
     weather_params: dict[str, Any] = field(default_factory=dict)
     # Export price (€/kWh). None → exports settle at the import price (FR-002).
     feed_in_tariff: float | None = None
+    # Anchors t0 (FR-011); None → the runner anchors to clock-now midnight.
+    start: datetime | None = None
     expected_solve_time_seconds: float | None = None
     tags: list[str] = field(default_factory=list)
+
+
+def resolve_constraint_window(data: dict[str, Any], t0: datetime) -> ConstraintWindow:
+    """Build a ConstraintWindow, resolving a relative deadline against t0 (FR-011).
+
+    ``deadline_offset_hours`` is an offset from the scenario start, so a scenario
+    stays valid at any wall-clock date instead of pinning an absolute deadline
+    that silently expires. An absolute ``deadline`` is still accepted.
+    """
+    data = dict(data)
+    offset = data.pop("deadline_offset_hours", None)
+    if offset is not None:
+        if "deadline" in data:
+            msg = f"constraint window {data.get('window_id')!r} sets both deadline and deadline_offset_hours"
+            raise ValueError(msg)
+        data["deadline"] = t0 + timedelta(hours=float(offset))
+    if data.get("created_at") is None:
+        data["created_at"] = t0
+    return ConstraintWindow(**data)
 
 
 def load_scenario(path: str | Path) -> Scenario:
@@ -59,6 +83,12 @@ def load_scenario(path: str | Path) -> Scenario:
     # Load manifests from references or inline
     manifests = _load_manifests(data.get("manifests", []), filepath.parent)
 
+    start_raw = data.get("start")
+    start: datetime | None = None
+    if start_raw is not None:
+        # yaml parses bare ISO timestamps to datetime already; accept strings too
+        start = start_raw if isinstance(start_raw, datetime) else datetime.fromisoformat(str(start_raw))
+
     return Scenario(
         name=data.get("name", filepath.stem),
         description=data.get("description", ""),
@@ -72,6 +102,7 @@ def load_scenario(path: str | Path) -> Scenario:
         price_params=data.get("price_params", {}),
         weather_params=data.get("weather_params", {}),
         feed_in_tariff=data.get("feed_in_tariff"),
+        start=start,
         expected_solve_time_seconds=data.get("expected_solve_time_seconds"),
         tags=data.get("tags", []),
     )

@@ -17,21 +17,22 @@ from pathlib import Path
 from typing import Any
 
 from hemm_core.constraints import ConstraintWindowManager
-from hemm_core.manifest.messages import ConstraintWindow
 from hemm_core.manifest.validator import validate_manifest
-from hemm_core.sim.scenario import Scenario, load_scenario
+from hemm_core.sim.scenario import Scenario, load_scenario, resolve_constraint_window
 from hemm_core.sim.synthetic import generate_price_series
 from hemm_core.solvers.milp_central import MILPCentralSolver
 from hemm_core.solvers.protocol import SolverResult
 from hemm_core.time import FixedClock
 
-# Canonical instant: 2026-05-07T00:00Z. Every scenario's constraint deadlines
-# fall on 2026-05-07 (07:00…23:59), so starting the 24h horizon at this instant
-# places all deadlines *inside* the planning window — the constraints genuinely
-# bind (EV delivers its energy, the tank reaches 60°C, the heat pump meets its
-# runtime), making the golden a strong parity reference rather than a trivial
-# all-zero plan. Pinning it also makes the oracle independent of the wall-clock
-# date the capture or parity run happens on.
+# Canonical instant: 2026-05-07T00:00Z — the pinned t0 the oracle solves at.
+# Scenario deadlines are relative (`deadline_offset_hours`, FR-011) and resolve
+# against this instant to the same absolute deadlines the goldens were captured
+# with (offsets equal the time-of-day of the historic 2026-05-07 deadlines), so
+# every constraint still falls *inside* the 24h planning window and genuinely
+# binds (EV delivers its energy, the tank reaches 60°C, the heat pump meets its
+# runtime) — a strong parity reference rather than a trivial all-zero plan.
+# Pinning also keeps the oracle independent of the wall-clock date the capture
+# or parity run happens on.
 CANONICAL_NOW = datetime(2026, 5, 7, 0, 0, tzinfo=UTC)
 
 # Tolerances from plan.md / contracts: solver-reformulation float noise only.
@@ -91,7 +92,10 @@ def solve_scenario(path: str | Path) -> SolverResult:
 
     mgr = ConstraintWindowManager(clock=clock)
     for cw_data in scenario.constraint_windows:
-        mgr.add(ConstraintWindow(**cw_data))
+        # Relative deadlines resolve against the pinned CANONICAL_NOW, so the
+        # oracle stays deterministic and the migrated scenarios (offset =
+        # time-of-day of the old 2026-05-07 deadlines) keep bit-identical goldens.
+        mgr.add(resolve_constraint_window(cw_data, CANONICAL_NOW))
     active_windows = mgr.get_active(now=CANONICAL_NOW)
 
     price_forecast = generate_price_series(

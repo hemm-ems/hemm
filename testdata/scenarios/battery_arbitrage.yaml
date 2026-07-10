@@ -22,7 +22,7 @@ manifests:
 constraint_windows:
   - window_id: min_soc_morning
     device_id: house_battery
-    deadline: "2026-05-07T07:00:00+00:00"
+    deadline_offset_hours: 7
     requirement:
       type: min_soc_until
       min_soc_pct: 50

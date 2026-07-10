@@ -27,14 +27,14 @@ manifests:
 constraint_windows:
   - window_id: hp_min_runtime
     device_id: heat_pump_main
-    deadline: "2026-05-07T23:59:00+00:00"
+    deadline_offset_hours: 23.98
     requirement:
       type: min_runtime_per_day
       min_hours: 6
     priority_penalty: 4.0
   - window_id: hp_max_runtime
     device_id: heat_pump_main
-    deadline: "2026-05-07T23:59:00+00:00"
+    deadline_offset_hours: 23.98
     requirement:
       type: max_runtime_per_day
       max_hours: 16
