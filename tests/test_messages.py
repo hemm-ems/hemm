@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from hypothesis import given, settings
@@ -252,6 +252,33 @@ class TestConflictResolution:
         )
         conflicts = find_conflicts([w1, w2])
         assert len(conflicts) == 0
+
+    @pytest.mark.unit
+    def test_find_conflicts_same_device_non_overlapping(self) -> None:
+        """Same-device windows separated in time do not conflict (interval overlap)."""
+        t0 = datetime(2026, 5, 6, tzinfo=UTC)
+        early = ConstraintWindow(
+            window_id="early",
+            device_id="d1",
+            deadline=t0 + timedelta(hours=1),
+            requirement=ReachMinTempOnce(target_temp_c=60.0),
+            priority_penalty=5.0,
+            created_at=t0,
+        )
+        late = ConstraintWindow(
+            window_id="late",
+            device_id="d1",
+            deadline=t0 + timedelta(hours=3),
+            requirement=ReachMinTempOnce(target_temp_c=50.0),
+            priority_penalty=1.0,
+            created_at=t0 + timedelta(hours=2),
+        )
+        assert find_conflicts([early, late]) == []
+        # But once their intervals overlap, they do conflict (higher penalty first).
+        overlapping = late.model_copy(update={"created_at": t0})
+        conflicts = find_conflicts([early, overlapping])
+        assert len(conflicts) == 1
+        assert conflicts[0][0].window_id == "early"
 
 
 class TestPlanReason:

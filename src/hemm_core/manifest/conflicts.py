@@ -21,11 +21,24 @@ def resolve_conflicts(windows: list[ConstraintWindow]) -> list[ConstraintWindow]
     return sorted(windows, key=lambda w: w.priority_penalty, reverse=True)
 
 
+def _overlaps(w1: ConstraintWindow, w2: ConstraintWindow) -> bool:
+    """Whether two windows' active intervals overlap.
+
+    A window is active over ``[created_at, deadline]`` (a missing ``created_at`` is
+    treated as unbounded-early). Two intervals overlap iff each starts before the
+    other ends.
+    """
+    s1, s2 = w1.created_at, w2.created_at
+    return (s1 is None or s1 < w2.deadline) and (s2 is None or s2 < w1.deadline)
+
+
 def find_conflicts(windows: list[ConstraintWindow]) -> list[tuple[ConstraintWindow, ConstraintWindow]]:
     """Find pairs of conflicting constraint windows.
 
-    Two windows conflict when they target the same device and overlap in time.
-    Returns pairs where the first element has higher priority.
+    Two windows conflict when they target the same device *and* their active intervals
+    (``[created_at, deadline]``) overlap — same-device windows separated in time do not
+    compete for the same capacity. Returns pairs where the first element has the higher
+    priority (``priority_penalty``).
     """
     conflicts: list[tuple[ConstraintWindow, ConstraintWindow]] = []
 
@@ -35,13 +48,13 @@ def find_conflicts(windows: list[ConstraintWindow]) -> list[tuple[ConstraintWind
         by_device.setdefault(w.device_id, []).append(w)
 
     for device_windows in by_device.values():
-        # Sort by deadline for overlap detection
         sorted_windows = sorted(device_windows, key=lambda w: w.deadline)
         for i in range(len(sorted_windows)):
             for j in range(i + 1, len(sorted_windows)):
                 w1, w2 = sorted_windows[i], sorted_windows[j]
-                # Windows for the same device implicitly compete for the same capacity
-                # The one with higher priority_penalty wins
+                if not _overlaps(w1, w2):
+                    continue
+                # The window with the higher priority_penalty wins the conflict.
                 if w1.priority_penalty >= w2.priority_penalty:
                     conflicts.append((w1, w2))
                 else:
