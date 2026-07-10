@@ -7,9 +7,9 @@ from datetime import timedelta
 from typing import Any
 
 from hemm_core.constraints import ConstraintWindowManager
-from hemm_core.manifest.messages import ConstraintWindow, PlanMessage
+from hemm_core.manifest.messages import PlanMessage
 from hemm_core.manifest.validator import validate_manifest
-from hemm_core.sim.scenario import Scenario
+from hemm_core.sim.scenario import Scenario, resolve_constraint_window
 from hemm_core.sim.synthetic import generate_price_series
 from hemm_core.solvers.milp_central import MILPCentralSolver
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
@@ -97,18 +97,36 @@ class SimRunner:
                 error=f"Manifest validation failed: {e}",
             )
 
-        # Set up constraint windows
+        t0 = scenario.start or self._clock.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Set up constraint windows; relative deadlines resolve against t0 (FR-011)
         self._constraint_mgr.clear()
         for cw_data in scenario.constraint_windows:
-            cw = ConstraintWindow(**cw_data)
+            cw = resolve_constraint_window(cw_data, t0)
             self._constraint_mgr.add(cw)
+
+        # Fail loud when a scenario declares constraint windows but none are
+        # active at t0 — e.g. every deadline has expired (FR-012). Otherwise the
+        # solver runs unconstrained and reports a misleading green result.
+        if scenario.constraint_windows and not self._constraint_mgr.get_active(now=t0):
+            return SimResult(
+                scenario_name=scenario.name,
+                days_simulated=0,
+                total_solve_time_seconds=self._clock.monotonic() - start_time,
+                metrics=metrics,
+                success=False,
+                error=(
+                    "No declared constraint window is active at scenario start (t0); "
+                    "all windows have expired. Use deadline_offset_hours or a scenario "
+                    "start anchor so windows stay active at run time."
+                ),
+            )
 
         # Run simulation day by day
         all_plans: list[PlanMessage] = []
         all_results: list[SolverResult] = []
         previous_plans: list[PlanMessage] | None = None
 
-        t0 = self._clock.now().replace(hour=0, minute=0, second=0, microsecond=0)
         solver = self._solver_for(scenario)
 
         for day in range(scenario.days):

@@ -22,6 +22,9 @@ manifests:
 constraint_windows:
   - window_id: pool_pump_min_energy
     device_id: pool_pump
+    # Deliberately absolute and beyond the horizon: this scenario exercises the
+    # "window active for the whole sim" shape. Rots in 2030 — the FR-012
+    # fail-loud guard will catch it then; don't copy this pattern elsewhere.
     deadline: "2030-01-01T04:00:00+00:00"
     requirement:
       type: min_energy_until
