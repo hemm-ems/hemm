@@ -116,3 +116,26 @@ class NodeSpec(ComponentSpec):
     ambient_ctx: str = "outdoor_temp"
     comfort_band: tuple[float, float] | None = None
     initial: float | None = None
+
+
+def apply_generation_forecast(
+    components: list[ComponentSpec],
+    generation_forecast: dict[str, list[float]] | None,
+) -> list[ComponentSpec]:
+    """Overlay runtime generation series onto forecast-less source components.
+
+    ``to_components()`` is a pure function of the manifest, so the actual
+    generation series (adapter fetch, sim synthesis) is injected at solve time
+    (FR-006). A forecast already present on a SourceSpec wins — test manifests
+    pin their own series.
+    """
+    if not generation_forecast:
+        return components
+    out: list[ComponentSpec] = []
+    for component in components:
+        series = generation_forecast.get(component.device_id)
+        if isinstance(component, SourceSpec) and component.forecast is None and series is not None:
+            out.append(component.model_copy(update={"forecast": series}))
+        else:
+            out.append(component)
+    return out

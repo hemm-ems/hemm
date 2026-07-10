@@ -8,9 +8,10 @@ from typing import Any
 
 from hemm_core.constraints import ConstraintWindowManager
 from hemm_core.manifest.messages import PlanMessage
+from hemm_core.manifest.types import PVForecastManifest
 from hemm_core.manifest.validator import validate_manifest
 from hemm_core.sim.scenario import Scenario, resolve_constraint_window
-from hemm_core.sim.synthetic import generate_price_series
+from hemm_core.sim.synthetic import generate_price_series, generate_pv_series
 from hemm_core.solvers.milp_central import MILPCentralSolver
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
 from hemm_core.time import Clock, WallClock
@@ -151,6 +152,7 @@ class SimRunner:
                 horizon_minutes=scenario.horizon_hours * 60,
                 resolution_minutes=scenario.resolution_minutes,
                 previous_plans=previous_plans,
+                generation_forecast=self._generation_forecast(manifests, day_start, scenario),
             )
 
             all_results.append(result)
@@ -199,6 +201,21 @@ class SimRunner:
             manifest = validate_manifest(data)
             manifests.append(manifest)
         return manifests
+
+    def _generation_forecast(
+        self, manifests: list[Any], day_start: Any, scenario: Scenario
+    ) -> dict[str, list[float]] | None:
+        """Synthesize a deterministic generation series per source manifest (FR-006)."""
+        forecast: dict[str, list[float]] = {}
+        for manifest in manifests:
+            if isinstance(manifest, PVForecastManifest):
+                forecast[manifest.device_id] = generate_pv_series(
+                    start=day_start,
+                    hours=scenario.horizon_hours,
+                    resolution_minutes=scenario.resolution_minutes,
+                    peak_kwp=manifest.peak_power_kwp,
+                )
+        return forecast or None
 
     def _price_params(self, scenario: Scenario) -> dict[str, Any]:
         """Extract price generation parameters from scenario."""

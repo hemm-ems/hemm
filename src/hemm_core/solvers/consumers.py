@@ -6,7 +6,15 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-from hemm_core.manifest.components import ComponentSpec, ConverterSpec, Primitive, SinkSpec, SourceSpec, StorageSpec
+from hemm_core.manifest.components import (
+    ComponentSpec,
+    ConverterSpec,
+    Primitive,
+    SinkSpec,
+    SourceSpec,
+    StorageSpec,
+    apply_generation_forecast,
+)
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
     HoldTempBand,
@@ -613,13 +621,17 @@ class CompositeConsumer(ConsumerModel):
         return total
 
 
-def get_consumer_model(manifest: Any, outdoor_temp_c: float = 5.0) -> ConsumerModel | None:
+def get_consumer_model(
+    manifest: Any,
+    outdoor_temp_c: float = 5.0,
+    generation_forecast: dict[str, list[float]] | None = None,
+) -> ConsumerModel | None:
     """Compile a manifest to a primitive-based local response model."""
     to_components = getattr(manifest, "to_components", None)
     if to_components is None:
         return None
 
-    components = list(to_components())
+    components = apply_generation_forecast(list(to_components()), generation_forecast)
     storage = next(
         (
             component

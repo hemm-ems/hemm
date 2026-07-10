@@ -87,6 +87,7 @@ class DistributedSolver:
         resolution_minutes: int = 15,
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
+        generation_forecast: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
         start_time = self._clock.monotonic()
@@ -105,7 +106,9 @@ class DistributedSolver:
 
         for manifest in manifests:
             did = manifest.device_id
-            consumer = get_consumer_model(manifest, outdoor_temp_c=self._outdoor_temp_c)
+            consumer = get_consumer_model(
+                manifest, outdoor_temp_c=self._outdoor_temp_c, generation_forecast=generation_forecast
+            )
             if consumer is not None:
                 consumers.append((did, consumer))
             # Gather per-device constraints

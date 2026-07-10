@@ -106,3 +106,29 @@ def generate_weather_series(
         series.append((t, round(temp, 1)))
 
     return series
+
+
+def generate_pv_series(
+    start: datetime,
+    hours: int = 24,
+    resolution_minutes: int = 15,
+    peak_kwp: float = 5.0,
+) -> list[float]:
+    """Generate a deterministic synthetic PV production series in kW.
+
+    Half-sine bell between 06:00 and 20:00 local-slot time scaled to
+    ``peak_kwp`` — no randomness, so sims and goldens stay reproducible.
+    Values are positive kW of *available* production; the solver dispatches
+    sources as negative power and may curtail below this bound (FR-006).
+    """
+    n_slots = hours * 60 // resolution_minutes
+    series: list[float] = []
+    sunrise, sunset = 6.0, 20.0
+    for i in range(n_slots):
+        t = start + timedelta(minutes=i * resolution_minutes)
+        hour = t.hour + t.minute / 60.0
+        if sunrise <= hour <= sunset:
+            series.append(round(peak_kwp * math.sin(math.pi * (hour - sunrise) / (sunset - sunrise)), 6))
+        else:
+            series.append(0.0)
+    return series
