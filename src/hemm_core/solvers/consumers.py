@@ -259,7 +259,13 @@ class StorageConsumer(_PrimitiveConsumer):
                         parents[t][next_idx] = (idx, power)
             costs = next_costs
 
-        idx = min(range(len(costs)), key=lambda i: costs[i])
+        # Terminal neutrality (mirrors Backend A): only end states at or above
+        # the starting level count, so draining the initial charge to the grid
+        # cannot be booked as profit (review 001:FR-001/FR-002).
+        reachable = [i for i in range(len(costs)) if costs[i] != inf]
+        neutral = [i for i in reachable if levels[i] >= levels[start_idx] - 1e-9]
+        pool = neutral or reachable
+        idx = min(pool, key=lambda i: costs[i])
         powers = [0.0] * n_slots
         for t in range(n_slots - 1, -1, -1):
             parent = parents[t][idx]

@@ -70,11 +70,15 @@ class MILPCentralSolver:
         outdoor_temp_c: float = 5.0,
         time_limit_seconds: float = 60.0,
         *,
+        feed_in_tariff: float | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._plan_change_penalty = plan_change_penalty
         self._outdoor_temp_c = outdoor_temp_c
         self._time_limit_seconds = time_limit_seconds
+        # Export price (€/kWh). None → exports credited at the import price
+        # (backward-compatible); set below the import price for realistic economics.
+        self._feed_in_tariff = feed_in_tariff
         self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
@@ -191,6 +195,19 @@ class MILPCentralSolver:
             thermal_penalty_terms=thermal_penalty_terms,
         )
 
+        # Grid settlement (FR-002): net house power per slot is split into
+        # import and export legs so exports can be credited at a feed-in tariff
+        # below the import price. feed_in_tariff=None keeps export == import.
+        dt_hours = resolution_minutes / 60.0
+        feed_in = [self._feed_in_tariff if self._feed_in_tariff is not None else prices[t] for t in range(n_slots)]
+        model.grid_import = pyo.Var(model.T, domain=pyo.NonNegativeReals)
+        model.grid_export = pyo.Var(model.T, domain=pyo.NonNegativeReals)
+        model.grid_balance = pyo.ConstraintList()
+        for t in model.T:
+            model.grid_balance.add(
+                model.grid_import[t] - model.grid_export[t] == sum(model.power[d, t] for d in model.D)
+            )
+
         # Objective: minimize energy cost + plan-change penalty
         prev_plan_map = self._build_prev_plan_map(previous_plans, device_ids, n_slots)
 
@@ -205,7 +222,8 @@ class MILPCentralSolver:
                     model.delta_constraints.add(model.delta[d, t] >= prev_val - model.power[d, t])
 
         def obj_rule(m: Any) -> Any:
-            energy_cost = sum(prices[t] * m.power[d, t] * (resolution_minutes / 60.0) for d in m.D for t in m.T)
+            # Grid settlement: buy imports at the price, sell exports at the feed-in.
+            energy_cost = sum((prices[t] * m.grid_import[t] - feed_in[t] * m.grid_export[t]) * dt_hours for t in m.T)
             # Plan-change penalty (linear via auxiliary variables)
             change_penalty: Any = 0.0
             if prev_plan_map and self._plan_change_penalty > 0:
@@ -299,15 +317,16 @@ class MILPCentralSolver:
             model.power_bounds.add(model.power[device_id, t] <= upper * model.on[device_id, t])
 
     def _add_source(self, model: pyo.ConcreteModel, component: ComponentSpec, n_slots: int) -> None:
-        """Add a source primitive. PV remains pinned to zero when no forecast is supplied."""
+        """Add a source primitive. Production is negative power (Backend B convention);
+        curtailment down to zero is allowed. Pinned to zero when no forecast is supplied."""
         if not isinstance(component, SourceSpec):
             raise TypeError(f"Expected SourceSpec, got {type(component).__name__}")
         forecast = component.forecast or [0.0] * n_slots
         for t in model.T:
             upper = forecast[int(t)] if int(t) < len(forecast) else forecast[-1]
-            model.power_bounds.add(model.power[component.device_id, t] >= 0.0)
-            model.power_bounds.add(model.power[component.device_id, t] <= upper)
-            model.power_bounds.add(model.power[component.device_id, t] <= upper * model.on[component.device_id, t])
+            model.power_bounds.add(model.power[component.device_id, t] <= 0.0)
+            model.power_bounds.add(model.power[component.device_id, t] >= -upper)
+            model.power_bounds.add(model.power[component.device_id, t] >= -upper * model.on[component.device_id, t])
 
     def _add_sink(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
         """Add a controllable or fixed sink primitive."""
@@ -368,6 +387,12 @@ class MILPCentralSolver:
             model.component_constraints.add(model.soc[component.device_id, t + 1] >= component.min_level)
             if component.max_level is not None:
                 model.component_constraints.add(model.soc[component.device_id, t + 1] <= max_level)
+
+        # Terminal neutrality for direct electrical storage: the horizon may not
+        # end below the starting level, so the optimizer cannot book the initial
+        # charge as profit by dumping it to the grid (review 001:FR-001/FR-002).
+        if component.node is None:
+            model.component_constraints.add(model.soc[component.device_id, n_slots] >= component.capacity * 0.5)
 
     def _add_converter(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
         """Add converter input-power bounds; thermal injection is consumed by node builders."""
@@ -513,11 +538,29 @@ class MILPCentralSolver:
                 min_slots = int(req.min_hours * 60 / resolution_minutes)
                 window_slots = range(min(deadline_slot + 1, n_slots))
                 model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in window_slots) >= min_slots)
+                # `on` must mean actually running: with only the one-sided
+                # power<=upper*on link the solver satisfies runtime with on=1 at
+                # 0 kW — vacuous compliance. Backend B runs min-runtime slots at
+                # rated power; mirror that with a rated-power floor while on.
+                rated = self._rated_power_kw(components_by_device.get(cw.device_id, []))
+                if rated > 0:
+                    for t in window_slots:
+                        model.constraint_windows.add(model.power[cw.device_id, t] >= rated * model.on[cw.device_id, t])
 
             elif isinstance(req, MaxRuntimePerDay):
                 max_slots = int(req.max_hours * 60 / resolution_minutes)
                 window_slots = range(min(deadline_slot + 1, n_slots))
                 model.constraint_windows.add(sum(model.on[cw.device_id, t] for t in window_slots) <= max_slots)
+
+    @staticmethod
+    def _rated_power_kw(components: list[ComponentSpec]) -> float:
+        """Electrical rating a runtime-constrained device runs at while on."""
+        for component in components:
+            if isinstance(component, ConverterSpec):
+                return float(component.max_input_kw)
+            if isinstance(component, SinkSpec):
+                return float(component.max_power_kw)
+        return 0.0
 
     @staticmethod
     def _state_vars_by_device(components_by_device: dict[str, list[ComponentSpec]]) -> dict[str, set[str]]:
@@ -605,7 +648,11 @@ class MILPCentralSolver:
                 end = start + timedelta(minutes=resolution_minutes)
                 power = pyo.value(model.power[did, t])
                 on = pyo.value(model.on[did, t])
-                mode = "active" if on > 0.5 else "idle"
+                # Mode from actual power, not the `on` binary: `on` is only
+                # one-sidedly linked to power, so it is degenerate for slots with
+                # zero or negative power and would flag idle devices as active —
+                # the integration actuates scripts based on this field.
+                mode = "active" if abs(power) > 0.01 else "idle"
 
                 reason = self._determine_reason(
                     did,

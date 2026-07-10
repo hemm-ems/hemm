@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from hemm_core.manifest.components import ComponentSpec, SourceSpec
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
     HoldTempBand,
@@ -211,7 +212,10 @@ class TestMILPCentralSolver:
         assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
         powers = [slot.power_kw for slot in result.plans[0].slots]
         assert powers[0] == pytest.approx(1.0)
-        assert powers[1] == pytest.approx(-1.0)
+        # Terminal neutrality caps the discharge: SoC may not end below the
+        # initial 1.0 kWh, so only the 0.9 kWh charged (after losses) can be
+        # sold, draining 0.9 kWh at 0.9 discharge efficiency = 0.81 kW for 1h.
+        assert powers[1] == pytest.approx(-0.81)
 
         soc = [1.0]
         for power in powers:
@@ -220,7 +224,7 @@ class TestMILPCentralSolver:
             else:
                 soc.append(soc[-1] + power / 0.9)
         assert soc[1] == pytest.approx(1.9)
-        assert soc[2] == pytest.approx(1.9 - (1.0 / 0.9))
+        assert soc[2] == pytest.approx(1.0)
 
     @pytest.mark.unit
     def test_battery_does_not_charge_and_discharge_simultaneously(self) -> None:
@@ -883,3 +887,100 @@ class TestThermalModel:
         )
 
         assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+
+
+# --- Grid-settlement economics tests (review 001: FR-001/FR-002) ---
+
+
+class _ForecastSourceManifest:
+    """Minimal duck-typed manifest whose source carries a real forecast."""
+
+    device_id = "pv_stub"
+    name = "PV Stub"
+
+    def to_components(self) -> list[ComponentSpec]:
+        return [SourceSpec(device_id=self.device_id, forecast=[2.0] * 8)]
+
+
+@pytest.mark.req("002:FR-002", "002:FR-005")
+class TestGridSettlement:
+    """No free money: exports, terminal SoC, and runtime power are honest."""
+
+    @pytest.mark.unit
+    def test_flat_prices_battery_stays_idle(self) -> None:
+        """A lone battery cannot profit under a flat tariff (no money printer)."""
+        solver = MILPCentralSolver()
+        result = solver.solve(
+            manifests=[_make_battery()],
+            constraint_windows=[],
+            price_forecast=_make_price_forecast(96),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.objective_value == pytest.approx(0.0, abs=1e-6)
+        slots = result.plans[0].slots
+        assert all(abs(s.power_kw) < 0.01 for s in slots)
+        assert all(s.mode == "idle" for s in slots)
+
+    @pytest.mark.unit
+    def test_zero_feed_in_kills_export_arbitrage(self) -> None:
+        """With feed-in below the buy price, a lone battery has no arbitrage."""
+        solver = MILPCentralSolver(feed_in_tariff=0.0)
+        t0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
+        prices = [(t0 + timedelta(minutes=15 * i), 0.10 if i < 48 else 0.40) for i in range(96)]
+        result = solver.solve(
+            manifests=[_make_battery()],
+            constraint_windows=[],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.objective_value >= -1e-6
+
+    @pytest.mark.unit
+    def test_source_production_is_negative_power(self) -> None:
+        """A forecast-backed source produces (negative power) and earns credit."""
+        solver = MILPCentralSolver()
+        result = solver.solve(
+            manifests=[_ForecastSourceManifest()],
+            constraint_windows=[],
+            price_forecast=_make_price_forecast(8),
+            horizon_minutes=120,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        powers = [s.power_kw for s in result.plans[0].slots]
+        assert all(p <= 1e-6 for p in powers)
+        assert min(powers) == pytest.approx(-2.0)
+        assert result.objective_value < 0
+
+    @pytest.mark.unit
+    def test_min_runtime_runs_at_rated_power(self) -> None:
+        """Min-runtime slots draw rated power — on=1 at 0 kW is not compliance."""
+        solver = MILPCentralSolver()
+        hp = _make_heat_pump()
+        prices = _make_price_forecast(96)
+        cw = ConstraintWindow(
+            window_id="hp_runtime",
+            device_id="test_hp",
+            deadline=prices[0][0] + timedelta(hours=24),
+            requirement=MinRuntimePerDay(min_hours=6),
+            priority_penalty=4.0,
+            created_at=prices[0][0],
+        )
+        result = solver.solve(
+            manifests=[hp],
+            constraint_windows=[cw],
+            price_forecast=prices,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        rated_slots = sum(1 for s in result.plans[0].slots if s.power_kw >= 5.0 - 1e-6)
+        assert rated_slots >= 24

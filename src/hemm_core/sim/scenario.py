@@ -25,6 +25,8 @@ class Scenario:
     weather_profile: str = "default"
     price_params: dict[str, Any] = field(default_factory=dict)
     weather_params: dict[str, Any] = field(default_factory=dict)
+    # Export price (€/kWh). None → exports settle at the import price (FR-002).
+    feed_in_tariff: float | None = None
     expected_solve_time_seconds: float | None = None
     tags: list[str] = field(default_factory=list)
 
@@ -69,6 +71,7 @@ def load_scenario(path: str | Path) -> Scenario:
         weather_profile=data.get("weather_profile", "default"),
         price_params=data.get("price_params", {}),
         weather_params=data.get("weather_params", {}),
+        feed_in_tariff=data.get("feed_in_tariff"),
         expected_solve_time_seconds=data.get("expected_solve_time_seconds"),
         tags=data.get("tags", []),
     )
