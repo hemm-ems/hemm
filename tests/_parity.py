@@ -59,6 +59,14 @@ SCENARIOS = (
 # expected to diverge.
 DIVERGENCE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset()
 
+# Cost-tied alternate optima: for these (scenario, device) pairs the MILP optimum
+# is not unique (equal-price slots make the placement cost-neutral) and HiGHS
+# resolves the tie differently per platform (macOS ARM capture vs Linux x86 CI).
+# Per-slot parity is skipped; total device energy AND the scenario objective
+# still must match the golden. full_house/dhw: slots 4 and 8 are both off-peak,
+# tie observed after the grid-settlement import/export split.
+DEGENERATE_TIE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({("full_house", "dhw")})
+
 
 def _price_params(scenario: Scenario) -> dict[str, Any]:
     """Mirror SimRunner._price_params — pass through the supported price knobs."""

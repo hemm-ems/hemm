@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from tests._parity import (
+    DEGENERATE_TIE_ALLOWLIST,
     DIVERGENCE_ALLOWLIST,
     GOLDEN_DIR,
     OBJECTIVE_REL_TOL,
@@ -69,7 +70,7 @@ def test_backend_a_component_build_matches_per_device_golden(scenario: str) -> N
             diffs.append(f"{device}: slot count golden={len(golden_power)} current={len(current_power)}")
             continue
 
-        if pair in DIVERGENCE_ALLOWLIST:
+        if pair in DIVERGENCE_ALLOWLIST or pair in DEGENERATE_TIE_ALLOWLIST:
             if pair in ACTS_FROM_ZERO_ALLOWLIST:
                 acts_where_golden_was_zero = any(
                     abs(gv) <= POWER_ABS_TOL and abs(cv) > POWER_ABS_TOL
