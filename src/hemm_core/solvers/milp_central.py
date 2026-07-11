@@ -20,6 +20,7 @@ from hemm_core.manifest.components import (
     SinkSpec,
     SourceSpec,
     StorageSpec,
+    apply_generation_forecast,
 )
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
@@ -95,6 +96,7 @@ class MILPCentralSolver:
         resolution_minutes: int = 15,
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
+        generation_forecast: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
         start_time = self._clock.monotonic()
@@ -122,7 +124,8 @@ class MILPCentralSolver:
         model.D = pyo.Set(initialize=device_ids)
 
         components_by_device: dict[str, list[ComponentSpec]] = {
-            manifest.device_id: list(manifest.to_components()) for manifest in manifests
+            manifest.device_id: apply_generation_forecast(list(manifest.to_components()), generation_forecast)
+            for manifest in manifests
         }
         components = [
             component for device_components in components_by_device.values() for component in device_components

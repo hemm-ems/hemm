@@ -52,6 +52,7 @@ class SolverProtocol(Protocol):
         resolution_minutes: int,
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
+        generation_forecast: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve the optimization problem.
 
@@ -63,6 +64,9 @@ class SolverProtocol(Protocol):
             resolution_minutes: Time resolution per slot.
             previous_plans: Previous plans for plan-change penalty.
             weather_forecast: Outdoor temperature forecast as (timestamp, °C) pairs.
+            generation_forecast: Per-device generation series in kW (positive =
+                available production), overlaid onto forecast-less source
+                components at build time (FR-006).
 
         Returns:
             SolverResult with plans for each device.

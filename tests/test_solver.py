@@ -20,6 +20,7 @@ from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
     HeatPumpManifest,
+    PVForecastManifest,
     RoomManifest,
     ThermostatLoadManifest,
 )
@@ -984,3 +985,72 @@ class TestGridSettlement:
         assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
         rated_slots = sum(1 for s in result.plans[0].slots if s.power_kw >= 5.0 - 1e-6)
         assert rated_slots >= 24
+
+
+def _make_pv(peak_kwp: float = 3.0) -> PVForecastManifest:
+    return PVForecastManifest(
+        device_id="pv1",
+        name="Test PV",
+        peak_power_kwp=peak_kwp,
+        safe_default={"script": "script.pv_safe"},
+    )
+
+
+@pytest.mark.req("002:FR-006")
+class TestPVDispatch:
+    """FR-006: injected generation reaches the energy balance; curtailment only pays."""
+
+    @pytest.mark.unit
+    def test_generation_forecast_dispatches_pv(self) -> None:
+        """A PV manifest with an injected series produces at the forecast bound."""
+        solver = MILPCentralSolver()
+        result = solver.solve(
+            manifests=[_make_pv()],
+            constraint_windows=[],
+            price_forecast=_make_price_forecast(8),
+            horizon_minutes=120,
+            resolution_minutes=15,
+            generation_forecast={"pv1": [3.0] * 8},
+        )
+
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        powers = [s.power_kw for s in result.plans[0].slots]
+        assert all(p == pytest.approx(-3.0) for p in powers), powers
+        assert result.objective_value < 0  # production earns, i.e. reduces import
+
+    @pytest.mark.unit
+    def test_pv_curtailed_only_when_export_costs(self) -> None:
+        """Curtailment engages exactly when exporting costs money (negative feed-in).
+
+        This is the behavior the curtailable-variable form of FR-006 buys over
+        the original fixed-parameter wording (decision 2026-07-10)."""
+        for feed_in, expected in ((-0.05, 0.0), (0.05, -3.0)):
+            solver = MILPCentralSolver(feed_in_tariff=feed_in)
+            result = solver.solve(
+                manifests=[_make_pv()],
+                constraint_windows=[],
+                price_forecast=_make_price_forecast(8),
+                horizon_minutes=120,
+                resolution_minutes=15,
+                generation_forecast={"pv1": [3.0] * 8},
+            )
+            assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+            powers = [s.power_kw for s in result.plans[0].slots]
+            assert all(p == pytest.approx(expected, abs=1e-6) for p in powers), (feed_in, powers)
+
+    @pytest.mark.unit
+    def test_sim_runner_injects_pv_series(self) -> None:
+        """The sim runner synthesizes a generation series for PV manifests (FR-006)."""
+        from hemm_core.sim.runner import SimRunner
+        from hemm_core.sim.scenario import Scenario
+
+        scenario = Scenario(
+            name="pv_dispatch",
+            horizon_hours=24,
+            resolution_minutes=60,
+            manifests=[_make_pv().model_dump(mode="json")],
+        )
+        result = SimRunner().run(scenario)
+        assert result.success, result.error
+        pv_plan = next(p for p in result.plans if p.device_id == "pv1")
+        assert min(s.power_kw for s in pv_plan.slots) < 0, "PV never dispatched by the runner"
