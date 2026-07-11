@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.7.1] - 2026-07-11
+
+> First PyPI release since 2026.5.2 — also delivers everything listed under
+> [2026.6.1] below (primitive component model, Backend B rebuild, storage
+> round-trip losses, RC room thermal estimator). The stray `v2026.6.0` /
+> `v2026.7.0` tags were never published.
+
+### Added
+
+- **PV generation reaches the energy balance (FR-006)**: `PVForecastManifest.to_components()` now carries the runtime generation forecast into the solver instead of hardcoding `forecast=None`; the sim runner passes its synthetic PV series through `generation_forecast`.
+- **Scenarios that cannot rot (FR-011/012/013)**: constraint windows support relative `deadline_offset_hours` (mutually exclusive with absolute `deadline`); `SimRunner` fails loud when every declared window is already expired at `t0`; sim metrics report per-window fulfillment, not just solve success.
+
+### Fixed
+
+- **Grid settlement and dispatch semantics in Backend A (FR-002, SC-001)**: per-slot net power across all devices is settled at import price vs. feed-in tariff (exports no longer credited at import price); plan-slot `mode` derives from actual power rather than the one-sided `on` binary.
+- `find_conflicts` uses real interval overlap for constraint-window arbitration (001:FR-010 / remediation FR-032).
+- Package `__version__` fallback literals kept in sync with `pyproject.toml`.
+
 ## [2026.6.1] - 2026-06-10
 
 ### Changed
