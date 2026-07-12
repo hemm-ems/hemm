@@ -88,6 +88,7 @@ class DistributedSolver:
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
         start_time = self._clock.monotonic()
@@ -99,6 +100,10 @@ class DistributedSolver:
         # Build time axis
         t0 = price_forecast[0][0] if price_forecast else self._clock.now()
         prices = self._align_prices(price_forecast, n_slots)
+        # Per-slot outdoor temperature (FR-106 / RW4 FR-404). Absent weather →
+        # the scalar constructor default for every slot, so Backend B behaviour is
+        # unchanged when no forecast is passed.
+        outdoor_temps = self._align_weather(weather_forecast, n_slots)
 
         # Create consumer models for each device
         consumers: list[tuple[str, ConsumerModel]] = []
@@ -107,7 +112,11 @@ class DistributedSolver:
         for manifest in manifests:
             did = manifest.device_id
             consumer = get_consumer_model(
-                manifest, outdoor_temp_c=self._outdoor_temp_c, generation_forecast=generation_forecast
+                manifest,
+                outdoor_temp_c=self._outdoor_temp_c,
+                generation_forecast=generation_forecast,
+                outdoor_temps=outdoor_temps,
+                initial_state=initial_state.get(did) if initial_state else None,
             )
             if consumer is not None:
                 consumers.append((did, consumer))
@@ -259,6 +268,18 @@ class DistributedSolver:
             else:
                 prices.append(price_forecast[-1][1])
         return prices
+
+    def _align_weather(self, weather_forecast: list[tuple[datetime, float]] | None, n_slots: int) -> list[float]:
+        """Align weather forecast to solver slots, falling back to the constructor default."""
+        if not weather_forecast:
+            return [self._outdoor_temp_c] * n_slots
+        temps: list[float] = []
+        for i in range(n_slots):
+            if i < len(weather_forecast):
+                temps.append(weather_forecast[i][1])
+            else:
+                temps.append(weather_forecast[-1][1])
+        return temps
 
     def _build_plans(
         self,
