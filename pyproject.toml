@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hemm"
-version = "2026.7.1"
+version = "2026.7.2"
 description = "Distributed Energy Optimizer for Home Automation"
 readme = "README.md"
 license = "MIT"

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.7.2] - 2026-07-12
+
+> The live-data spine (003:RW1). The solver now starts every run from the real
+> home's measured state instead of hardcoded defaults, so the HA coordinator can
+> feed it live price, PV and SoC. All additive with default-preserving fallbacks
+> — golden parity is bit-identical (7/7).
+
+### Added
+
+- **Solver starts from measured state (FR-105)**: the solver protocol accepts a per-device `initial_state` (`{soc_kwh, temp_c}`). Backend A anchors storage SoC initialisation *and* the terminal-neutrality floor to the measured start (not `capacity·0.5`, so a low real SoC is no longer force-charged to 50 %) and starts thermal nodes from the measured temperature; Backend B's `StorageConsumer` starts from the measured level. Omitting `initial_state` is behaviour-preserving.
+- **Weather-driven COP in Backend B (FR-106)**: the distributed backend's `ConverterConsumer` interpolates COP against the passed per-slot `weather_forecast` instead of the flat 5 °C default (Backend A already did).
+
+### Notes
+
+- No change was needed for the pre-fetched price `data=` path (`TemplateAdapter`/`ForecastSolarAdapter._from_data`) or for the `generation_forecast` overlay (`PVForecastManifest.to_components()` intentionally keeps `forecast=None` as the overlay hook) — the HA coordinator (ha-hemm) now supplies both.
+
 ## [2026.7.1] - 2026-07-11
 
 > First PyPI release since 2026.5.2 — also delivers everything listed under
