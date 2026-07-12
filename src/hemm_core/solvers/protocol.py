@@ -53,6 +53,7 @@ class SolverProtocol(Protocol):
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> SolverResult:
         """Solve the optimization problem.
 
@@ -67,6 +68,11 @@ class SolverProtocol(Protocol):
             generation_forecast: Per-device generation series in kW (positive =
                 available production), overlaid onto forecast-less source
                 components at build time (FR-006).
+            initial_state: Per-device measured starting state (RW1 FR-105). Keyed
+                by device_id, each value a dict with optional ``soc_kwh`` (storage
+                stored energy) and ``temp_c`` (thermal-node temperature). When a
+                value is absent the solver falls back to its neutral defaults
+                (SoC 50 %, 20 °C), so omitting it is behaviour-preserving.
 
         Returns:
             SolverResult with plans for each device.

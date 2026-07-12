@@ -97,6 +97,7 @@ class MILPCentralSolver:
         previous_plans: list[PlanMessage] | None = None,
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
         start_time = self._clock.monotonic()
@@ -175,11 +176,19 @@ class MILPCentralSolver:
             elif component.primitive == Primitive.SINK:
                 self._add_sink(model, component)
             elif component.primitive == Primitive.STORAGE:
-                self._add_storage(model, component, n_slots, resolution_minutes)
+                self._add_storage(model, component, n_slots, resolution_minutes, initial_state=initial_state)
             elif component.primitive == Primitive.CONVERTER:
                 self._add_converter(model, component)
             elif component.primitive == Primitive.NODE:
-                self._add_node(model, component, components, outdoor_temps, n_slots, resolution_minutes)
+                self._add_node(
+                    model,
+                    component,
+                    components,
+                    outdoor_temps,
+                    n_slots,
+                    resolution_minutes,
+                    initial_state=initial_state,
+                )
 
         # Apply constraint windows (including thermal constraints)
         model.constraint_windows = pyo.ConstraintList()
@@ -343,6 +352,8 @@ class MILPCentralSolver:
         component: ComponentSpec,
         n_slots: int,
         resolution_minutes: int,
+        *,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Add storage level recursion and direct electrical bounds where applicable."""
         if not isinstance(component, StorageSpec):
@@ -373,7 +384,10 @@ class MILPCentralSolver:
 
         dt_hours = resolution_minutes / 60.0
         max_level = component.max_level if component.max_level is not None else component.capacity
-        model.component_constraints.add(model.soc[component.device_id, 0] == component.capacity * 0.5)
+        # Start from the measured SoC when supplied (RW1 FR-105), else the neutral
+        # 50 % default — omitting initial_state is behaviour-preserving.
+        start_soc = self._initial_soc_kwh(component, initial_state)
+        model.component_constraints.add(model.soc[component.device_id, 0] == start_soc)
         for t in range(n_slots):
             leakage = component.leakage or 0.0
             model.component_constraints.add(
@@ -394,8 +408,23 @@ class MILPCentralSolver:
         # Terminal neutrality for direct electrical storage: the horizon may not
         # end below the starting level, so the optimizer cannot book the initial
         # charge as profit by dumping it to the grid (review 001:FR-001/FR-002).
+        # Anchored to the *measured* start (RW1 FR-105/FR-204) so a low real SoC is
+        # not force-charged up to a fictitious 50 %.
         if component.node is None:
-            model.component_constraints.add(model.soc[component.device_id, n_slots] >= component.capacity * 0.5)
+            model.component_constraints.add(model.soc[component.device_id, n_slots] >= start_soc)
+
+    @staticmethod
+    def _initial_soc_kwh(component: StorageSpec, initial_state: dict[str, dict[str, float]] | None) -> float:
+        """Starting stored energy (kWh): measured value clamped to bounds, else 50 %."""
+        capacity = component.capacity if component.capacity is not None else 0.0
+        default = capacity * 0.5
+        if not initial_state:
+            return default
+        device = initial_state.get(component.device_id)
+        if not device or "soc_kwh" not in device:
+            return default
+        upper = component.max_level if component.max_level is not None else capacity
+        return max(component.min_level, min(upper, float(device["soc_kwh"])))
 
     def _add_converter(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
         """Add converter input-power bounds; thermal injection is consumed by node builders."""
@@ -411,6 +440,8 @@ class MILPCentralSolver:
         outdoor_temps: list[float],
         n_slots: int,
         resolution_minutes: int,
+        *,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Add the RC balance for a thermal node."""
         if not isinstance(component, NodeSpec):
@@ -422,6 +453,11 @@ class MILPCentralSolver:
         thermal_mass = component.thermal_mass or 1.0
         ua_kw = component.ua or 0.0
         initial = component.initial if component.initial is not None else _DEFAULT_INDOOR_TEMP_C
+        # Start from the measured node temperature when supplied (RW1 FR-105).
+        if initial_state:
+            device = initial_state.get(component.device_id)
+            if device and "temp_c" in device:
+                initial = float(device["temp_c"])
         converters = [
             candidate
             for candidate in components

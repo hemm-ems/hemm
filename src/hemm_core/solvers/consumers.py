@@ -131,9 +131,19 @@ class _PrimitiveConsumer(ConsumerModel):
 class StorageConsumer(_PrimitiveConsumer):
     """Storage response with arbitrage and deadline target handling."""
 
-    def __init__(self, manifest: Any, component: StorageSpec) -> None:
+    def __init__(self, manifest: Any, component: StorageSpec, *, initial_soc_kwh: float | None = None) -> None:
         super().__init__(manifest, component)
         self._storage = component
+        self._initial_soc_kwh = initial_soc_kwh
+
+    def _start_level(self, capacity: float | None, min_level: float, max_level: float | None) -> float:
+        """Measured start level clamped to bounds (RW1 FR-105), else the 50 % default."""
+        if capacity is None:
+            return 0.0
+        if self._initial_soc_kwh is None:
+            return capacity * _DEFAULT_STATE_FRACTION
+        upper = max_level if max_level is not None else capacity
+        return max(min_level, min(upper, float(self._initial_soc_kwh)))
 
     def respond_to_prices(
         self,
@@ -156,7 +166,7 @@ class StorageConsumer(_PrimitiveConsumer):
         capacity = storage.capacity
         min_level = storage.min_level
         max_level = storage.max_level if storage.max_level is not None else capacity
-        level = capacity * _DEFAULT_STATE_FRACTION if capacity is not None else 0.0
+        level = self._start_level(capacity, min_level, max_level)
 
         target_energy, target_level, deadline_slot = self._target(constraints, t0, resolution_minutes, n_slots)
         if storage.charge_only:
@@ -375,11 +385,15 @@ class ConverterConsumer(_PrimitiveConsumer):
         *,
         storage: StorageSpec | None = None,
         outdoor_temp_c: float = 5.0,
+        outdoor_temps: list[float] | None = None,
+        initial_temp_c: float | None = None,
     ) -> None:
         super().__init__(manifest, component)
         self._converter = component
         self._storage = storage
         self._outdoor_temp_c = outdoor_temp_c
+        self._outdoor_temps = outdoor_temps
+        self._initial_temp_c = initial_temp_c if initial_temp_c is not None else _DEFAULT_THERMAL_INITIAL_C
 
     def respond_to_prices(
         self,
@@ -445,6 +459,8 @@ class ConverterConsumer(_PrimitiveConsumer):
 
     def _factor_at_slot(self, slot: int) -> float:
         if self._converter.factor_ctx == "outdoor_temp":
+            if self._outdoor_temps and slot < len(self._outdoor_temps):
+                return self._converter.factor_at(self._outdoor_temps[slot])
             return self._converter.factor_at(self._outdoor_temp_c)
         return self._converter.factor_at(0.0)
 
@@ -470,7 +486,7 @@ class ConverterConsumer(_PrimitiveConsumer):
     def _thermal_delta(self, target_temp_c: float) -> float:
         if not self._storage or self._storage.capacity is None:
             return 0.0
-        return max(0.0, self._storage.capacity * (target_temp_c - _DEFAULT_THERMAL_INITIAL_C))
+        return max(0.0, self._storage.capacity * (target_temp_c - self._initial_temp_c))
 
 
 class SinkConsumer(_PrimitiveConsumer):
@@ -625,8 +641,16 @@ def get_consumer_model(
     manifest: Any,
     outdoor_temp_c: float = 5.0,
     generation_forecast: dict[str, list[float]] | None = None,
+    *,
+    outdoor_temps: list[float] | None = None,
+    initial_state: dict[str, float] | None = None,
 ) -> ConsumerModel | None:
-    """Compile a manifest to a primitive-based local response model."""
+    """Compile a manifest to a primitive-based local response model.
+
+    ``outdoor_temps`` is a per-slot temperature series (FR-106); when absent the
+    scalar ``outdoor_temp_c`` is used for every slot. ``initial_state`` is this
+    device's measured start (RW1 FR-105) with optional ``soc_kwh`` / ``temp_c``.
+    """
     to_components = getattr(manifest, "to_components", None)
     if to_components is None:
         return None
@@ -640,6 +664,8 @@ def get_consumer_model(
         ),
         None,
     )
+    initial_soc_kwh = initial_state.get("soc_kwh") if initial_state else None
+    initial_temp_c = initial_state.get("temp_c") if initial_state else None
     consumers: list[ConsumerModel] = []
 
     for component in components:
@@ -648,9 +674,18 @@ def get_consumer_model(
         elif component.primitive == Primitive.SINK and isinstance(component, SinkSpec):
             consumers.append(SinkConsumer(manifest, component))
         elif component.primitive == Primitive.STORAGE and isinstance(component, StorageSpec) and component.node is None:
-            consumers.append(StorageConsumer(manifest, component))
+            consumers.append(StorageConsumer(manifest, component, initial_soc_kwh=initial_soc_kwh))
         elif component.primitive == Primitive.CONVERTER and isinstance(component, ConverterSpec):
-            consumers.append(ConverterConsumer(manifest, component, storage=storage, outdoor_temp_c=outdoor_temp_c))
+            consumers.append(
+                ConverterConsumer(
+                    manifest,
+                    component,
+                    storage=storage,
+                    outdoor_temp_c=outdoor_temp_c,
+                    outdoor_temps=outdoor_temps,
+                    initial_temp_c=initial_temp_c,
+                )
+            )
         elif component.primitive == Primitive.NODE:
             has_electrical_component = any(
                 candidate.primitive in {Primitive.SOURCE, Primitive.SINK, Primitive.STORAGE, Primitive.CONVERTER}
