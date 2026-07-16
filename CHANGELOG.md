@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.7.3] - 2026-07-16
+
+> RW2 (003): the plan respects real physical & economic limits. One golden-capture
+> cycle; all defaults behaviour-preserving unless listed under Changed.
+
+### Added
+
+- **Grid / main-fuse power cap (FR-201).** `MILPCentralSolver(grid_import_limit_kw=, grid_export_limit_kw=)` bounds each settlement leg per slot; an unsatisfiable cap returns `INFEASIBLE` instead of silently over-drawing the fuse. A German §14a dimming order is expressible as a lowered import limit.
+- **Ignored-window diagnostics (FR-206).** Both backends share one applicability partition (`solvers/windows.py`): windows with a past deadline, a demand deadline beyond the horizon, or an unknown device are rejected with a warning and surfaced in `SolverResult.diagnostics["ignored_windows"]` — never clamped into the horizon. Restrictive requirements (forbidden window, max runtime, comfort band) still truncate safely at the horizon edge.
+- **Per-zone internal gains + tank draw (FR-207/208).** `solve(internal_gains={zone: [kW, ...]})` overlays a gains series onto exactly one thermal node (`NodeSpec.gains`); negative values model extraction — a hot-water draw on the tank state. Backend B warns loudly that it ignores the series until T404.
+- **`PlanReason.EXPENSIVE_GRID`.** Discharge into top-quartile price slots is grid arbitrage, not PV surplus — both backends now label it `expensive_grid` (fixes the real-home mislabel where evening peak discharge read `pv_surplus`).
+
+### Changed
+
+- **EV/DHW storage is no longer lossless (FR-203).** `EVChargerManifest.charge_efficiency` (default 0.9) and `WaterHeaterManifest.heating_efficiency` (default 0.98, applied to both the converter factor and the storage charge leg). Plans draw the efficiency-adjusted energy; goldens recaptured.
+- **Declared physics is honored or rejected (FR-205).** Enforced: heat-pump `min_modulation_pct` and EV `min_charge_kw` are semi-continuous floors in both backends; `flex_cost_per_hour_early` prices earliness (linear objective term in Backend A, price shading in Backend B). Rejected at model construction: `defrost_lockout_minutes != 0`, `south_facing_windows=True`, and implausible EV phase/power combinations (32 A x 230 V per phase). ha-hemm 2026.7.5 migrates its flows accordingly.
+- **INFEASIBLE is reachable.** The appsi solve now uses `load_solutions=False`; an infeasible model maps to `SolverStatus.INFEASIBLE` instead of raising into the `ERROR` path (which had made the status unreachable).
+
+### Fixed
+
+- **Terminal-SoC floor regression tests (FR-204).** The floor anchored to the measured start landed with RW1; the missing tests (a 20 % start is not force-charged toward 50 %; arbitrage ends at or above the measured start) are now in `tests/test_rw2_limits.py`.
+- **Two clamp artifacts.** `pool_pump.yaml`'s deliberate year-2030 deadline relied on clamp-to-horizon (now `deadline_offset_hours: 4`), and a comfort-band test's deadline predated its own price series by four months and passed only via the slot-0 clamp.
+
 ## [2026.7.2] - 2026-07-12
 
 > The live-data spine (003:RW1). The solver now starts every run from the real

@@ -11,14 +11,14 @@ def _read_project_version() -> str:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except (FileNotFoundError, tomllib.TOMLDecodeError):
         # Keep in sync with the version in pyproject.toml.
-        return "2026.7.2"
+        return "2026.7.3"
     project = data.get("project")
     if isinstance(project, dict):
         version = project.get("version")
         if isinstance(version, str):
             return version
     # Keep in sync with the version in pyproject.toml.
-    return "2026.7.2"
+    return "2026.7.3"
 
 
 try:
