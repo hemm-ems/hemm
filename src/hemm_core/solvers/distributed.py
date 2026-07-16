@@ -7,6 +7,7 @@ Features: operating band, plan-change penalty, ADMM augmented Lagrangian.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -16,6 +17,8 @@ from hemm_core.solvers.consumers import ConsumerModel, get_consumer_model
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
 from hemm_core.solvers.windows import partition_constraint_windows
 from hemm_core.time import Clock, WallClock
+
+_LOGGER = logging.getLogger(__name__)
 
 # Convergence tolerance for total power imbalance (kW)
 DEFAULT_CONVERGENCE_TOL = 0.1
@@ -90,9 +93,16 @@ class DistributedSolver:
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
         initial_state: dict[str, dict[str, float]] | None = None,
+        internal_gains: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
         start_time = self._clock.monotonic()
+
+        if internal_gains:
+            # Never silently ignore an input (FR-205 discipline): Backend B's
+            # consumers do not model zone dynamics yet — T404 (RW4) makes this
+            # backend consume real inputs or refuse the scenario.
+            _LOGGER.warning("Backend B does not model internal_gains yet (T404); the series is ignored")
 
         n_slots = horizon_minutes // resolution_minutes
         if n_slots <= 0:

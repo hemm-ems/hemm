@@ -54,6 +54,7 @@ class SolverProtocol(Protocol):
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
         initial_state: dict[str, dict[str, float]] | None = None,
+        internal_gains: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve the optimization problem.
 
@@ -73,6 +74,11 @@ class SolverProtocol(Protocol):
                 stored energy) and ``temp_c`` (thermal-node temperature). When a
                 value is absent the solver falls back to its neutral defaults
                 (SoC 50 %, 20 °C), so omitting it is behaviour-preserving.
+            internal_gains: Per-zone internal-gain series in kW, keyed by the
+                zone's device_id and overlaid onto its thermal node (FR-208).
+                Positive = heat gain (occupants, appliances); negative =
+                extraction, e.g. a hot-water draw on a tank node (FR-207).
+                Omitting it is behaviour-preserving.
 
         Returns:
             SolverResult with plans for each device.

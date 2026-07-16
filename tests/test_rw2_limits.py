@@ -664,6 +664,104 @@ class TestDeclaredPhysicsHonoredOrRejected:
         assert all(abs(p) < 0.01 for p in powers[:48])
 
 
+def _room(device_id: str) -> "RoomManifest":
+    from hemm_core.manifest.types import RoomManifest
+
+    return RoomManifest(
+        device_id=device_id,
+        name=device_id,
+        floor_area_m2=25.0,
+        thermal_mass_kwh_per_k=2.0,
+        u_value_w_per_m2k=0.5,
+        safe_default={"script": "script.noop"},
+    )
+
+
+def _room_hp(device_id: str, room_id: str) -> "HeatPumpManifest":
+    from hemm_core.manifest.types import HeatPumpManifest
+
+    return HeatPumpManifest(
+        device_id=device_id,
+        name=device_id,
+        max_power_kw=5.0,
+        room_id=room_id,
+        safe_default={"script": "script.noop"},
+    )
+
+
+def _hold_band(device_id: str, window_id: str) -> ConstraintWindow:
+    from hemm_core.manifest.constraints import HoldTempBand
+
+    return ConstraintWindow(
+        window_id=window_id,
+        device_id=device_id,
+        deadline=_T0 + timedelta(hours=24),
+        requirement=HoldTempBand(min_temp_c=20.0, max_temp_c=23.0),
+        priority_penalty=3.0,
+    )
+
+
+class TestZoneGainsAndTankDraw:
+    """FR-207/FR-208 — per-zone internal gains and hot-water draw on the tank state."""
+
+    def _solve_two_rooms(self, internal_gains: dict[str, list[float]] | None) -> dict[str, float]:
+        cold = [(_T0 + timedelta(minutes=15 * i), -5.0) for i in range(96)]
+        result = MILPCentralSolver().solve(
+            manifests=[_room("room_a"), _room_hp("hp_a", "room_a"), _room("room_b"), _room_hp("hp_b", "room_b")],
+            constraint_windows=[_hold_band("room_a", "comfort_a"), _hold_band("room_b", "comfort_b")],
+            price_forecast=_flat_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            weather_forecast=cold,
+            internal_gains=internal_gains,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        return {p.device_id: _total_energy_kwh(result, p.device_id) for p in result.plans}
+
+    @pytest.mark.unit
+    def test_gains_offset_heating_in_their_zone_only(self) -> None:
+        """0.5 kW of occupant gains in room A cut hp_a's energy; hp_b is untouched."""
+        base = self._solve_two_rooms(None)
+        gained = self._solve_two_rooms({"room_a": [0.5] * 96})
+        assert gained["hp_a"] < base["hp_a"] - 0.5  # gains displace real heating energy
+        assert gained["hp_b"] == pytest.approx(base["hp_b"], abs=0.05)  # not duplicated across zones
+
+    @pytest.mark.unit
+    def test_tank_draw_forces_reheat(self) -> None:
+        """A hot-water draw (negative gains on the tank zone) costs reheat energy."""
+        from hemm_core.manifest.constraints import HoldTempBand
+
+        def solve_energy(draw_kw: float) -> float:
+            cw = ConstraintWindow(
+                window_id="keep_hot",
+                device_id="dhw",
+                deadline=_T0 + timedelta(hours=24),
+                requirement=HoldTempBand(min_temp_c=50.0, max_temp_c=65.0),
+                priority_penalty=10.0,
+            )
+            gains = {"dhw": [-draw_kw] * 96} if draw_kw else None
+            result = MILPCentralSolver().solve(
+                manifests=[_water_heater(1.0)],
+                constraint_windows=[cw],
+                price_forecast=_flat_prices(),
+                horizon_minutes=1440,
+                resolution_minutes=15,
+                initial_state={"dhw": {"temp_c": 55.0}},
+                internal_gains=gains,
+            )
+            assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+            return _total_energy_kwh(result, "dhw")
+
+        idle_losses_only = solve_energy(0.0)
+        with_draw = solve_energy(0.5)
+        # 0.5 kW extracted for 24 h = 12 kWh that heating must replace.
+        assert with_draw > idle_losses_only + 10.0
+
+    @pytest.mark.unit
+    def test_gains_default_is_behaviour_preserving(self) -> None:
+        assert self._solve_two_rooms(None) == self._solve_two_rooms({})
+
+
 class TestIgnoredWindows:
     """FR-206 — windows the solver cannot apply are surfaced, never clamped."""
 

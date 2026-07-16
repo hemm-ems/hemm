@@ -21,6 +21,7 @@ from hemm_core.manifest.components import (
     SourceSpec,
     StorageSpec,
     apply_generation_forecast,
+    apply_internal_gains,
 )
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
@@ -111,6 +112,7 @@ class MILPCentralSolver:
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
         initial_state: dict[str, dict[str, float]] | None = None,
+        internal_gains: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
         start_time = self._clock.monotonic()
@@ -138,7 +140,10 @@ class MILPCentralSolver:
         model.D = pyo.Set(initialize=device_ids)
 
         components_by_device: dict[str, list[ComponentSpec]] = {
-            manifest.device_id: apply_generation_forecast(list(manifest.to_components()), generation_forecast)
+            manifest.device_id: apply_internal_gains(
+                apply_generation_forecast(list(manifest.to_components()), generation_forecast),
+                internal_gains,
+            )
             for manifest in manifests
         }
         components = [
@@ -559,12 +564,17 @@ class MILPCentralSolver:
         if not has_power_component:
             self._add_power_bounds(model, component.device_id, 0.0, 0.0)
 
+        gains = component.gains or []
         model.thermal_constraints.add(model.temp[component.device_id, 0] == initial)
         for t in range(n_slots):
             q_in: Any = 0.0
             for converter in converters:
                 ctx = outdoor_temps[t] if converter.factor_ctx == "outdoor_temp" else 0.0
                 q_in += model.power[converter.device_id, t] * converter.factor_at(ctx)
+            # Per-zone internal gains (FR-208); negative values model extraction
+            # such as a hot-water draw on a tank node (FR-207).
+            if gains:
+                q_in += gains[t] if t < len(gains) else gains[-1]
             t_out = outdoor_temps[t]
             model.thermal_constraints.add(
                 model.temp[component.device_id, t + 1]
