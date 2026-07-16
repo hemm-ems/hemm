@@ -72,6 +72,8 @@ class MILPCentralSolver:
         time_limit_seconds: float = 60.0,
         *,
         feed_in_tariff: float | None = None,
+        grid_import_limit_kw: float | None = None,
+        grid_export_limit_kw: float | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._plan_change_penalty = plan_change_penalty
@@ -80,6 +82,16 @@ class MILPCentralSolver:
         # Export price (€/kWh). None → exports credited at the import price
         # (backward-compatible); set below the import price for realistic economics.
         self._feed_in_tariff = feed_in_tariff
+        # Connection/main-fuse limits (kW). None → unbounded (legacy). A §14a
+        # dimming order is expressible as a lowered import limit (FR-201).
+        if grid_import_limit_kw is not None and grid_import_limit_kw <= 0:
+            msg = f"grid_import_limit_kw must be positive, got {grid_import_limit_kw}"
+            raise ValueError(msg)
+        if grid_export_limit_kw is not None and grid_export_limit_kw <= 0:
+            msg = f"grid_export_limit_kw must be positive, got {grid_export_limit_kw}"
+            raise ValueError(msg)
+        self._grid_import_limit_kw = grid_import_limit_kw
+        self._grid_export_limit_kw = grid_export_limit_kw
         self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
@@ -219,6 +231,13 @@ class MILPCentralSolver:
             model.grid_balance.add(
                 model.grid_import[t] - model.grid_export[t] == sum(model.power[d, t] for d in model.D)
             )
+            # FR-201: the connection limit bounds each leg; an impossible cap
+            # (e.g. fixed load above it) makes the solve INFEASIBLE — fail loud,
+            # never silently exceed the main fuse.
+            if self._grid_import_limit_kw is not None:
+                model.grid_balance.add(model.grid_import[t] <= self._grid_import_limit_kw)
+            if self._grid_export_limit_kw is not None:
+                model.grid_balance.add(model.grid_export[t] <= self._grid_export_limit_kw)
 
         # Objective: minimize energy cost + plan-change penalty
         prev_plan_map = self._build_prev_plan_map(previous_plans, device_ids, n_slots)
@@ -252,8 +271,10 @@ class MILPCentralSolver:
         solver = pyo.SolverFactory("appsi_highs")
         solver.options["time_limit"] = self._time_limit_seconds
 
+        # load_solutions=False so an infeasible model maps to INFEASIBLE instead
+        # of the appsi wrapper raising while trying to load a missing solution.
         try:
-            result = solver.solve(model, tee=False)
+            result = solver.solve(model, tee=False, load_solutions=False)
         except Exception as e:
             return SolverResult(
                 status=SolverStatus.ERROR,
@@ -268,6 +289,16 @@ class MILPCentralSolver:
                 status=status,
                 solve_time_seconds=self._clock.monotonic() - start_time,
                 diagnostics={"termination": str(result.solver.termination_condition)},
+            )
+
+        try:
+            model.solutions.load_from(result)
+        except Exception as e:
+            # e.g. a TIMEOUT with no incumbent — report honestly, never a stale plan.
+            return SolverResult(
+                status=SolverStatus.ERROR,
+                solve_time_seconds=self._clock.monotonic() - start_time,
+                diagnostics={"error": str(e), "termination": str(result.solver.termination_condition)},
             )
 
         # Extract plans

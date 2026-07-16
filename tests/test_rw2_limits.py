@@ -11,12 +11,14 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from hemm_core.manifest.messages import PlanReason
-from hemm_core.manifest.types import BatteryManifest
+from hemm_core.manifest.types import BatteryManifest, PassiveLoadManifest, PVForecastManifest
 from hemm_core.solvers.distributed import DistributedSolver
 from hemm_core.solvers.milp_central import MILPCentralSolver
-from hemm_core.solvers.protocol import SolverStatus
+from hemm_core.solvers.protocol import SolverResult, SolverStatus
 
 _T0 = datetime(2026, 5, 6, 0, 0, tzinfo=UTC)
 
@@ -89,3 +91,137 @@ class TestExpensiveGridReason:
         dist_peak = DistributedSolver._determine_reason("d", 1, -2.0, set(), prices, cheap, expensive)
         assert dist_low == PlanReason.PV_SURPLUS
         assert dist_peak == PlanReason.EXPENSIVE_GRID
+
+
+def _passive_load(power_kw: float, device_id: str = "load") -> PassiveLoadManifest:
+    return PassiveLoadManifest(
+        device_id=device_id,
+        name="Base Load",
+        typical_daily_kwh=power_kw * 24.0,
+        safe_default={"script": "script.noop"},
+    )
+
+
+def _pv(device_id: str = "pv") -> PVForecastManifest:
+    return PVForecastManifest(
+        device_id=device_id,
+        name="PV",
+        peak_power_kwp=5.0,
+        safe_default={"script": "script.noop"},
+    )
+
+
+def _net_per_slot(result: SolverResult, n_slots: int) -> list[float]:
+    """Total house power per slot (positive = import, negative = export)."""
+    totals = [0.0] * n_slots
+    for plan in result.plans:
+        for i, slot in enumerate(plan.slots[:n_slots]):
+            totals[i] += slot.power_kw
+    return totals
+
+
+class TestGridCap:
+    """FR-201 / SC-RW2a — per-slot grid import/export bounded by the connection limit."""
+
+    @pytest.mark.unit
+    def test_uncapped_solver_exceeds_the_fuse(self) -> None:
+        """Mutation guard: without a limit the plan does exceed 2 kW import."""
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert max(_net_per_slot(result, 96)) > 2.0
+
+    @pytest.mark.unit
+    def test_import_cap_binds(self) -> None:
+        solver = MILPCentralSolver(grid_import_limit_kw=2.0)
+        result = solver.solve(
+            manifests=[_battery()],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        net = _net_per_slot(result, 96)
+        assert max(net) <= 2.0 + 1e-6
+        # The battery still arbitrages within the cap.
+        assert any(p > 0.1 for p in net)
+
+    @pytest.mark.unit
+    def test_export_cap_curtails_pv(self) -> None:
+        solver = MILPCentralSolver(grid_export_limit_kw=2.0)
+        result = solver.solve(
+            manifests=[_pv()],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            generation_forecast={"pv": [5.0] * 96},
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        net = _net_per_slot(result, 96)
+        assert min(net) >= -2.0 - 1e-6
+
+    @pytest.mark.unit
+    def test_impossible_cap_is_infeasible_not_exceeded(self) -> None:
+        """A fixed 3 kW load with a 2 kW fuse fails loud instead of over-drawing."""
+        solver = MILPCentralSolver(grid_import_limit_kw=2.0)
+        result = solver.solve(
+            manifests=[_passive_load(3.0)],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+        assert result.status == SolverStatus.INFEASIBLE
+        assert result.plans == []
+
+    @pytest.mark.unit
+    def test_nonpositive_limit_rejected(self) -> None:
+        with pytest.raises(ValueError, match="grid_import_limit_kw"):
+            MILPCentralSolver(grid_import_limit_kw=0.0)
+        with pytest.raises(ValueError, match="grid_export_limit_kw"):
+            MILPCentralSolver(grid_export_limit_kw=-1.0)
+
+    @pytest.mark.unit
+    @settings(max_examples=8, deadline=None)
+    @given(
+        base_load_kw=st.floats(min_value=0.2, max_value=2.0),
+        headroom_kw=st.floats(min_value=0.3, max_value=4.0),
+        max_charge_kw=st.floats(min_value=1.0, max_value=11.0),
+        export_limit_kw=st.floats(min_value=0.5, max_value=6.0),
+    )
+    def test_property_no_slot_exceeds_limits(
+        self, base_load_kw: float, headroom_kw: float, max_charge_kw: float, export_limit_kw: float
+    ) -> None:
+        """SC-RW2a: randomized instances never exceed the configured limits."""
+        import_limit_kw = base_load_kw + headroom_kw  # always feasible by construction
+        battery = BatteryManifest(
+            device_id="bat",
+            name="Battery",
+            capacity_kwh=10.0,
+            max_charge_kw=max_charge_kw,
+            max_discharge_kw=max_charge_kw,
+            safe_default={"script": "script.noop"},
+        )
+        n_slots = 24
+        solver = MILPCentralSolver(
+            grid_import_limit_kw=import_limit_kw,
+            grid_export_limit_kw=export_limit_kw,
+        )
+        result = solver.solve(
+            manifests=[battery, _passive_load(base_load_kw)],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(n_slots),
+            horizon_minutes=n_slots * 15,
+            resolution_minutes=15,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        net = _net_per_slot(result, n_slots)
+        assert max(net) <= import_limit_kw + 1e-6
+        assert min(net) >= -export_limit_kw - 1e-6
