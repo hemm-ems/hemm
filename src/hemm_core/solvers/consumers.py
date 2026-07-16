@@ -269,6 +269,7 @@ class StorageConsumer(_PrimitiveConsumer):
                     max_discharge,
                     storage.charge_efficiency,
                     storage.discharge_efficiency,
+                    storage.min_charge_kw,
                 ):
                     slot_cost = prices[t] * power * dt_hours
                     candidate = current_cost + slot_cost
@@ -306,6 +307,7 @@ class StorageConsumer(_PrimitiveConsumer):
         max_discharge: float,
         charge_efficiency: float,
         discharge_efficiency: float,
+        min_charge_kw: float = 0.0,
     ) -> list[tuple[float, int]]:
         if slot in forbidden:
             return [(0.0, min(range(len(levels)), key=lambda i: abs(levels[i] - level)))]
@@ -313,7 +315,10 @@ class StorageConsumer(_PrimitiveConsumer):
         candidates = [0.0]
         spare = max(0.0, max_level - level)
         if spare > 0 and max_charge > 0:
-            candidates.append(min(max_charge, spare / (dt_hours * charge_efficiency)))
+            charge_candidate = min(max_charge, spare / (dt_hours * charge_efficiency))
+            # FR-205: no charging below the semi-continuous minimum.
+            if charge_candidate >= min_charge_kw:
+                candidates.append(charge_candidate)
         available = max(0.0, level - min_level)
         if available > 0 and max_discharge > 0:
             candidates.append(-min(max_discharge, available * discharge_efficiency / dt_hours))
@@ -364,11 +369,16 @@ class StorageConsumer(_PrimitiveConsumer):
 
         available = [(prices[t], t) for t in range(min(deadline_slot + 1, len(powers))) if t not in forbidden]
         available.sort()
+        min_charge = min(self._storage.min_charge_kw, max_charge)
         delivered = 0.0
         for _, t in available:
             if delivered >= required_input:
                 break
             power = min(max_charge, (required_input - delivered) / dt_hours)
+            # FR-205: charging is semi-continuous — a trailing partial slot is
+            # rounded up to the charger's minimum, never run below it.
+            if 0 < power < min_charge:
+                power = min_charge
             powers[t] = power
             delivered += power * dt_hours
 
@@ -450,6 +460,10 @@ class ConverterConsumer(_PrimitiveConsumer):
                 power = min(power, (required_input - input_delivered) / dt_hours)
             if needs_output and not needs_runtime:
                 power = min(power, (required_output - output_delivered) / (dt_hours * max(factor, 1e-9)))
+            # FR-205 min modulation: a trailing partial slot rounds up to the
+            # modulation floor — the converter never runs below it.
+            if 0 < power < converter.min_input_kw:
+                power = min(converter.min_input_kw, converter.max_input_kw)
             powers[t] = max(0.0, power)
             slots_used += 1  # noqa: SIM113
             input_delivered += powers[t] * dt_hours

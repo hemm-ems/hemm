@@ -416,6 +416,202 @@ def _soc_window(deadline: datetime, device_id: str = "bat", pct: float = 80.0) -
     )
 
 
+class TestDeclaredPhysicsHonoredOrRejected:
+    """FR-205 / SC-RW2c — every accepted manifest field binds or fails loud."""
+
+    @pytest.mark.unit
+    def test_defrost_lockout_rejected(self) -> None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        from hemm_core.manifest.types import HeatPumpManifest
+
+        with pytest.raises(PydanticValidationError, match="defrost_lockout_minutes"):
+            HeatPumpManifest(
+                device_id="hp",
+                name="HP",
+                max_power_kw=5.0,
+                defrost_lockout_minutes=30,
+                safe_default={"script": "script.noop"},
+            )
+
+    @pytest.mark.unit
+    def test_ev_phase_inconsistency_rejected(self) -> None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError, match="phase"):
+            EVChargerManifest(
+                device_id="ev",
+                name="EV",
+                max_charge_kw=11.0,
+                phases=1,  # 11 kW on one phase is 48 A — not a real wallbox
+                safe_default={"script": "script.noop"},
+            )
+        # The plausible 3-phase variant constructs fine.
+        EVChargerManifest(
+            device_id="ev",
+            name="EV",
+            max_charge_kw=11.0,
+            phases=3,
+            safe_default={"script": "script.noop"},
+        )
+
+    @pytest.mark.unit
+    def test_hp_min_modulation_binds_in_the_plan(self) -> None:
+        """Active heat-pump slots never run below the modulation floor."""
+        from hemm_core.manifest.constraints import HoldTempBand
+        from hemm_core.manifest.types import HeatPumpManifest, RoomManifest
+
+        room = RoomManifest(
+            device_id="room",
+            name="Room",
+            floor_area_m2=25.0,
+            thermal_mass_kwh_per_k=2.0,
+            u_value_w_per_m2k=0.5,
+            safe_default={"script": "script.noop"},
+        )
+        hp = HeatPumpManifest(
+            device_id="hp",
+            name="HP",
+            max_power_kw=5.0,
+            room_id="room",
+            min_modulation_pct=30,
+            safe_default={"script": "script.noop"},
+        )
+        cw = ConstraintWindow(
+            window_id="comfort",
+            device_id="room",
+            deadline=_T0 + timedelta(hours=24),
+            requirement=HoldTempBand(min_temp_c=20.0, max_temp_c=23.0),
+            priority_penalty=3.0,
+        )
+        cold = [(_T0 + timedelta(minutes=15 * i), -5.0) for i in range(96)]
+        result = MILPCentralSolver().solve(
+            manifests=[room, hp],
+            constraint_windows=[cw],
+            price_forecast=_flat_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            weather_forecast=cold,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        hp_plan = next(p for p in result.plans if p.device_id == "hp")
+        active = [s.power_kw for s in hp_plan.slots if s.power_kw > 0.01]
+        assert active, "cold day + comfort band must heat"
+        assert all(p >= 1.5 - 1e-6 for p in active)  # 30 % of 5 kW
+
+    @pytest.mark.unit
+    def test_converter_consumer_respects_modulation_floor(self) -> None:
+        """Backend B rounds a partial slot up to the modulation floor."""
+        from hemm_core.manifest.constraints import MinEnergyUntil
+        from hemm_core.manifest.types import HeatPumpManifest, RoomManifest
+
+        hp = HeatPumpManifest(
+            device_id="hp",
+            name="HP",
+            max_power_kw=5.0,
+            room_id="room",
+            min_modulation_pct=30,
+            cop_map=[(0.0, 1.0)],
+            safe_default={"script": "script.noop"},
+        )
+        _ = RoomManifest(
+            device_id="room",
+            name="Room",
+            floor_area_m2=25.0,
+            safe_default={"script": "script.noop"},
+        )
+        consumer = get_consumer_model(hp)
+        assert consumer is not None
+        cw = ConstraintWindow(
+            window_id="min_energy",
+            device_id="hp",
+            deadline=_T0 + timedelta(hours=24),
+            requirement=MinEnergyUntil(min_energy_kwh=0.2),
+        )
+        powers = consumer.respond_to_prices([0.30] * 96, 96, 15, [cw], _T0)
+        active = [p for p in powers if p > 0.01]
+        assert active
+        assert all(p >= 1.5 - 1e-6 for p in active)
+
+    @pytest.mark.unit
+    def test_ev_min_charge_kw_binds(self) -> None:
+        """Charging slots run at ≥ min_charge_kw or not at all (both backends)."""
+        ev = EVChargerManifest(
+            device_id="ev",
+            name="EV",
+            max_charge_kw=11.0,
+            min_charge_kw=6.0,
+            battery_capacity_kwh=10.0,
+            safe_default={"script": "script.noop"},
+        )
+        cw = _soc_window(_T0 + timedelta(hours=24), device_id="ev", pct=60.0)
+        result = MILPCentralSolver().solve(
+            manifests=[ev],
+            constraint_windows=[cw],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            initial_state={"ev": {"soc_kwh": 5.0}},
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        active = [s.power_kw for s in result.plans[0].slots if s.power_kw > 0.01]
+        assert active, "the SoC target requires charging"
+        assert all(p >= 6.0 - 1e-6 for p in active)
+
+        consumer = get_consumer_model(ev, initial_state={"soc_kwh": 5.0})
+        assert consumer is not None
+        powers = consumer.respond_to_prices([0.30] * 96, 96, 15, [cw], _T0)
+        active_b = [p for p in powers if p > 0.01]
+        assert active_b
+        assert all(p >= 6.0 - 1e-6 for p in active_b)
+
+    @pytest.mark.unit
+    def test_ev_without_window_plans_zero_demand(self) -> None:
+        """An unconstrained EV defaults to zero demand — no invented charge slots."""
+        result = MILPCentralSolver().solve(
+            manifests=[_ev()],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            initial_state={"ev": {"soc_kwh": 5.0}},
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert all(abs(s.power_kw) < 0.01 for s in result.plans[0].slots)
+
+        consumer = get_consumer_model(_ev(), initial_state={"soc_kwh": 5.0})
+        assert consumer is not None
+        powers = consumer.respond_to_prices([p for _, p in _valley_peak_prices()], 96, 15, [], _T0)
+        assert all(abs(p) < 0.01 for p in powers)
+
+    @pytest.mark.unit
+    def test_forbidden_window_gates_storage_discharge(self) -> None:
+        """A forbidden window blocks discharge too, in both backends."""
+        from hemm_core.manifest.constraints import ForbiddenWindow
+
+        cw = ConstraintWindow(
+            window_id="lockout",
+            device_id="bat",
+            deadline=_T0 + timedelta(hours=12),
+            requirement=ForbiddenWindow(),
+        )
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[cw],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        for slot in result.plans[0].slots[:48]:
+            assert abs(slot.power_kw) < 0.01
+
+        consumer = get_consumer_model(_battery())
+        assert consumer is not None
+        powers = consumer.respond_to_prices([p for _, p in _valley_peak_prices()], 96, 15, [cw], _T0)
+        assert all(abs(p) < 0.01 for p in powers[:48])
+
+
 class TestIgnoredWindows:
     """FR-206 — windows the solver cannot apply are surfaced, never clamped."""
 

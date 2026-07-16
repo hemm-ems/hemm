@@ -6,7 +6,6 @@
   "thermal_mass_kwh_per_k": 2.5,
   "u_value_w_per_m2k": 0.35,
   "window_area_m2": 8.0,
-  "south_facing_windows": true,
   "insulation_class": "good",
   "constraint_endpoints": {
     "hold_temp_band": ">=1"
@@ -48,14 +47,14 @@
   "tiered_config": [
     {
       "tier": "beginner",
-      "required_fields": ["floor_area_m2", "insulation_class", "south_facing_windows"],
+      "required_fields": ["floor_area_m2", "insulation_class"],
       "optional_fields": [],
       "defaults": {"thermal_mass_kwh_per_k": 2.5, "u_value_w_per_m2k": 0.35}
     },
     {
       "tier": "pro",
       "required_fields": ["floor_area_m2", "thermal_mass_kwh_per_k", "u_value_w_per_m2k", "window_area_m2"],
-      "optional_fields": ["south_facing_windows"],
+      "optional_fields": [],
       "defaults": {}
     }
   ]

@@ -312,9 +312,11 @@ class TestMILPCentralSolver:
         )
 
         assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
-        # Verify total energy delivered is >= 20 kWh
+        # Verify total energy delivered is >= 20 kWh. The deadline slot is
+        # inclusive (deadline_slot + 1 slots), so the window is slots[:33] —
+        # summing only 32 relied on solver tie-breaking on flat prices.
         plan = result.plans[0]
-        total_energy = sum(s.power_kw * 0.25 for s in plan.slots[:32])  # first 8 hours
+        total_energy = sum(s.power_kw * 0.25 for s in plan.slots[:33])
         assert total_energy >= 19.9  # slight tolerance for numerical
 
     @pytest.mark.unit

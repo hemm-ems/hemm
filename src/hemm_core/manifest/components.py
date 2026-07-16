@@ -65,6 +65,7 @@ class StorageSpec(ComponentSpec):
     primitive: Literal[Primitive.STORAGE] = Primitive.STORAGE
     capacity: float | None
     max_charge_kw: float | None = None
+    min_charge_kw: float = 0.0  # semi-continuous floor while charging (FR-205)
     max_discharge_kw: float = 0.0
     charge_efficiency: float = 1.0
     discharge_efficiency: float = 1.0
@@ -82,6 +83,7 @@ class ConverterSpec(ComponentSpec):
     input_bus: str = "elec"
     output_bus: str
     max_input_kw: float
+    min_input_kw: float = 0.0  # semi-continuous floor while on (FR-205 min modulation)
     factor_map: list[tuple[float, float]]
     factor_ctx: str = "outdoor_temp"
 

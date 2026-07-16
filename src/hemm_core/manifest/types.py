@@ -164,6 +164,19 @@ class RoomManifest(_ManifestBase):
     south_facing_windows: bool = False
     insulation_class: str | None = Field(default=None, description="'good', 'medium', 'poor' — beginner tier shortcut")
 
+    @model_validator(mode="after")
+    def _reject_unmodeled_solar_gains(self) -> RoomManifest:
+        # FR-205: no solver backend models passive solar gains yet, so accepting
+        # this flag would be a silent no-op. window_area_m2 still binds (envelope
+        # losses). Re-allow once a per-zone gains series drives the room node.
+        if self.south_facing_windows:
+            msg = (
+                "south_facing_windows is not modeled by any solver backend yet "
+                "(solar gains are ignored); set it to false (FR-205)"
+            )
+            raise ValueError(msg)
+        return self
+
     def to_components(self) -> list[ComponentSpec]:
         # Resolve thermal_mass + UA exactly as the Backend-A room RC block does
         # (solvers/milp_central.py): envelope = floor + window area; U-value falls
@@ -234,7 +247,20 @@ class HeatPumpManifest(_ManifestBase):
         default="water", description="Heat sink type: air (split AC) or water (radiator/floor)"
     )
 
+    @model_validator(mode="after")
+    def _reject_unmodeled_defrost(self) -> HeatPumpManifest:
+        # FR-205: defrost lockout has no solver model; a non-zero value would be
+        # a silent no-op. min_modulation_pct IS enforced (semi-continuous floor).
+        if self.defrost_lockout_minutes != 0:
+            msg = (
+                "defrost_lockout_minutes is not modeled by any solver backend yet; "
+                "set it to 0 (FR-205)"
+            )
+            raise ValueError(msg)
+        return self
+
     def to_components(self) -> list[ComponentSpec]:
+        min_power_kw = self.max_power_kw * self.min_modulation_pct / 100.0
         if self.room_id:
             return [
                 ConverterSpec(
@@ -242,11 +268,19 @@ class HeatPumpManifest(_ManifestBase):
                     input_bus="elec",
                     output_bus=f"thermal:{self.room_id}",
                     max_input_kw=self.max_power_kw,
+                    min_input_kw=min_power_kw,
                     factor_map=self.cop_map or DEFAULT_COP_MAP,
                     factor_ctx="outdoor_temp",
                 )
             ]
-        return [SinkSpec(device_id=self.device_id, max_power_kw=self.max_power_kw, controllable=True)]
+        return [
+            SinkSpec(
+                device_id=self.device_id,
+                min_power_kw=min_power_kw,
+                max_power_kw=self.max_power_kw,
+                controllable=True,
+            )
+        ]
 
 
 class WaterHeaterManifest(_ManifestBase):
@@ -369,6 +403,22 @@ class EVChargerManifest(_ManifestBase):
         description="Grid-to-EV-battery charging efficiency (onboard AC charger + cable losses)",
     )
 
+    @model_validator(mode="after")
+    def _validate_phase_consistency(self) -> EVChargerManifest:
+        # FR-205: phases must bind. 32 A × 230 V per phase caps the plausible
+        # charge power; a 1-phase 11 kW claim is a manifest error, not a hint.
+        max_plausible_kw = self.phases * 32 * 230 / 1000.0
+        if self.max_charge_kw > max_plausible_kw + 1e-9:
+            msg = (
+                f"max_charge_kw={self.max_charge_kw} exceeds {max_plausible_kw:.2f} kW "
+                f"(32 A × 230 V × {self.phases} phase(s)); fix phases or max_charge_kw (FR-205)"
+            )
+            raise ValueError(msg)
+        if self.min_charge_kw > self.max_charge_kw:
+            msg = f"min_charge_kw={self.min_charge_kw} exceeds max_charge_kw={self.max_charge_kw}"
+            raise ValueError(msg)
+        return self
+
     def to_components(self) -> list[ComponentSpec]:
         # charge_only: no V2G path is modeled, so there is deliberately no
         # discharge_efficiency field (it would be accepted-but-ignored, FR-205).
@@ -377,6 +427,7 @@ class EVChargerManifest(_ManifestBase):
                 device_id=self.device_id,
                 capacity=self.battery_capacity_kwh,
                 max_charge_kw=self.max_charge_kw,
+                min_charge_kw=self.min_charge_kw,
                 charge_efficiency=self.charge_efficiency,
                 charge_only=True,
                 max_level=self.battery_capacity_kwh,

@@ -383,10 +383,28 @@ class MILPCentralSolver:
             model.power_bounds.add(model.power[component.device_id, t] >= -upper * model.on[component.device_id, t])
 
     def _add_sink(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
-        """Add a controllable or fixed sink primitive."""
+        """Add a controllable or fixed sink primitive.
+
+        For controllable sinks the minimum is semi-continuous (FR-205 min
+        modulation): the device is either off or runs at ≥ min_power_kw. Fixed
+        sinks keep the hard band (e.g. passive loads with min == max).
+        """
         if not isinstance(component, SinkSpec):
             raise TypeError(f"Expected SinkSpec, got {type(component).__name__}")
-        self._add_power_bounds(model, component.device_id, component.min_power_kw, component.max_power_kw)
+        lower = 0.0 if component.controllable else component.min_power_kw
+        self._add_power_bounds(model, component.device_id, lower, component.max_power_kw)
+        if component.controllable and component.min_power_kw > 0:
+            for t in model.T:
+                model.power_bounds.add(
+                    model.power[component.device_id, t]
+                    >= component.min_power_kw * model.on[component.device_id, t]
+                )
+                # Close the one-sided on/off link: power > 0 forces on = 1, so
+                # the min floor cannot be dodged with on = 0.
+                model.power_bounds.add(
+                    model.power[component.device_id, t]
+                    <= component.max_power_kw * model.on[component.device_id, t]
+                )
 
     def _add_storage(
         self,
@@ -416,6 +434,13 @@ class MILPCentralSolver:
                 model.component_constraints.add(
                     model.power_charge[component.device_id, t] <= max_charge * model.b_charge[component.device_id, t]
                 )
+                if component.min_charge_kw > 0:
+                    # FR-205: charging is semi-continuous — off, or ≥ the
+                    # charger's minimum (e.g. the 6 A IEC floor of a wallbox).
+                    model.component_constraints.add(
+                        model.power_charge[component.device_id, t]
+                        >= component.min_charge_kw * model.b_charge[component.device_id, t]
+                    )
                 model.component_constraints.add(
                     model.power_discharge[component.device_id, t]
                     <= max_discharge * (1 - model.b_charge[component.device_id, t])
@@ -473,6 +498,17 @@ class MILPCentralSolver:
         if not isinstance(component, ConverterSpec):
             raise TypeError(f"Expected ConverterSpec, got {type(component).__name__}")
         self._add_power_bounds(model, component.device_id, 0.0, component.max_input_kw)
+        if component.min_input_kw > 0:
+            # FR-205 min modulation: off, or at least the modulation floor.
+            for t in model.T:
+                model.power_bounds.add(
+                    model.power[component.device_id, t]
+                    >= component.min_input_kw * model.on[component.device_id, t]
+                )
+                model.power_bounds.add(
+                    model.power[component.device_id, t]
+                    <= component.max_input_kw * model.on[component.device_id, t]
+                )
 
     def _add_node(
         self,
