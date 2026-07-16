@@ -109,6 +109,35 @@ class _PrimitiveConsumer(ConsumerModel):
         return self._reference_prices
 
     @staticmethod
+    def _flex_shaded_prices(
+        prices: list[float],
+        constraints: list[ConstraintWindow],
+        deadline_slot: int,
+        required_kwh: float,
+        dt_hours: float,
+    ) -> list[float]:
+        """Shade slot prices with the FR-205 flex earliness cost (sort-only).
+
+        Delivering 1 kWh at slot t costs an extra flex × hours-before-deadline
+        / required kWh — mirroring Backend A's objective term, so both backends
+        prefer late delivery when the window prices earliness.
+        """
+        flex = max(
+            (
+                cw.flex_cost_per_hour_early
+                for cw in constraints
+                if isinstance(cw.requirement, (MinEnergyUntil, MinSocUntil))
+            ),
+            default=0.0,
+        )
+        if flex <= 0 or required_kwh <= 1e-9:
+            return list(prices)
+        return [
+            price + flex * max(0.0, (deadline_slot - t) * dt_hours) / required_kwh
+            for t, price in enumerate(prices)
+        ]
+
+    @staticmethod
     def _dampen(
         powers: list[float],
         previous_power: list[float] | None,
@@ -176,7 +205,7 @@ class StorageConsumer(_PrimitiveConsumer):
                 required_input = max(required_input, deficit / max(storage.charge_efficiency, 1e-9))
             return self._charge_to_target(
                 powers,
-                decision_input,
+                self._flex_shaded_prices(decision_input, constraints, deadline_slot, required_input, dt_hours),
                 required_input,
                 deadline_slot,
                 forbidden,
@@ -430,6 +459,12 @@ class ConverterConsumer(_PrimitiveConsumer):
             return [0.0] * n_slots
 
         decision_input = self._prices_for_decision(prices, n_slots)
+        # Flex earliness shading applies to input-energy targets; thermal-output
+        # targets have no per-kWh-input requirement to normalize against.
+        if required_input > 0:
+            decision_input = self._flex_shaded_prices(
+                decision_input, constraints, deadline_slot, required_input, dt_hours
+            )
         scored: list[tuple[float, int, float]] = []
         for t in range(n_slots):
             if t in forbidden:
@@ -533,7 +568,9 @@ class SinkConsumer(_PrimitiveConsumer):
             return [0.0] * n_slots
 
         powers = [0.0] * n_slots
-        decision_input = self._prices_for_decision(prices, n_slots)
+        decision_input = self._flex_shaded_prices(
+            self._prices_for_decision(prices, n_slots), constraints, deadline_slot, min_energy, dt_hours
+        )
         available = [(decision_input[t], t) for t in range(n_slots) if t not in forbidden]
         available.sort()
         energy = 0.0

@@ -566,6 +566,58 @@ class TestDeclaredPhysicsHonoredOrRejected:
         assert all(p >= 6.0 - 1e-6 for p in active_b)
 
     @pytest.mark.unit
+    def test_flex_cost_shifts_delivery_toward_deadline(self) -> None:
+        """flex_cost_per_hour_early binds: a priced window charges late, not early."""
+
+        def weighted_mean_slot(powers: list[float]) -> float:
+            total = sum(powers)
+            assert total > 0
+            return sum(t * p for t, p in enumerate(powers)) / total
+
+        # Slightly rising prices: without flex the cheapest slots are the EARLIEST.
+        prices = [(_T0 + timedelta(minutes=15 * i), 0.30 + 0.0001 * i) for i in range(96)]
+        deadline = _T0 + timedelta(hours=12)
+
+        def solve_mean_slot(flex: float) -> float:
+            cw = ConstraintWindow(
+                window_id="departure",
+                device_id="ev",
+                deadline=deadline,
+                requirement=MinSocUntil(min_soc_pct=100),
+                flex_cost_per_hour_early=flex,
+            )
+            result = MILPCentralSolver().solve(
+                manifests=[_ev()],
+                constraint_windows=[cw],
+                price_forecast=prices,
+                horizon_minutes=1440,
+                resolution_minutes=15,
+                initial_state={"ev": {"soc_kwh": 5.0}},
+            )
+            assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+            return weighted_mean_slot([max(0.0, s.power_kw) for s in result.plans[0].slots])
+
+        assert solve_mean_slot(0.0) < 10  # cheapest-first → charges immediately
+        assert solve_mean_slot(2.0) > 40  # earliness priced → charges near the 12 h deadline
+
+        # Backend B mirrors the preference through price shading.
+        def consumer_mean_slot(flex: float) -> float:
+            cw = ConstraintWindow(
+                window_id="departure",
+                device_id="ev",
+                deadline=deadline,
+                requirement=MinSocUntil(min_soc_pct=100),
+                flex_cost_per_hour_early=flex,
+            )
+            consumer = get_consumer_model(_ev(), initial_state={"soc_kwh": 5.0})
+            assert consumer is not None
+            powers = consumer.respond_to_prices([p for _, p in prices], 96, 15, [cw], _T0)
+            return weighted_mean_slot(powers)
+
+        assert consumer_mean_slot(0.0) < 10
+        assert consumer_mean_slot(2.0) > 40
+
+    @pytest.mark.unit
     def test_ev_without_window_plans_zero_demand(self) -> None:
         """An unconstrained EV defaults to zero demand — no invented charge slots."""
         result = MILPCentralSolver().solve(

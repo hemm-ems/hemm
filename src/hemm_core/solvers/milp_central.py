@@ -214,7 +214,7 @@ class MILPCentralSolver:
         model.thermal_slack_lo = pyo.VarList(domain=pyo.NonNegativeReals)
         model.thermal_slack_hi = pyo.VarList(domain=pyo.NonNegativeReals)
         model.thermal_reached = pyo.VarList(domain=pyo.Binary)
-        thermal_penalty_terms: list[Any] = []
+        soft_penalty_terms: list[Any] = []
         self._apply_constraint_windows(
             model,
             applied_windows,
@@ -223,7 +223,8 @@ class MILPCentralSolver:
             t0,
             n_slots,
             resolution_minutes,
-            thermal_penalty_terms=thermal_penalty_terms,
+            soft_penalty_terms=soft_penalty_terms,
+            initial_state=initial_state,
         )
 
         # Grid settlement (FR-002): net house power per slot is split into
@@ -266,10 +267,10 @@ class MILPCentralSolver:
             change_penalty: Any = 0.0
             if prev_plan_map and self._plan_change_penalty > 0:
                 change_penalty = sum(self._plan_change_penalty * m.delta[d, t] for d in m.D for t in m.T)
-            # Thermal comfort violation penalty
+            # Soft penalties: thermal comfort violation + flex earliness cost
             comfort_penalty: Any = 0.0
-            if thermal_penalty_terms:
-                comfort_penalty = sum(thermal_penalty_terms)
+            if soft_penalty_terms:
+                comfort_penalty = sum(soft_penalty_terms)
             return energy_cost + change_penalty + comfort_penalty
 
         model.objective = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
@@ -581,11 +582,12 @@ class MILPCentralSolver:
         n_slots: int,
         resolution_minutes: int,
         *,
-        thermal_penalty_terms: list[Any] | None = None,
+        soft_penalty_terms: list[Any] | None = None,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Apply constraint windows to the Pyomo model."""
-        if thermal_penalty_terms is None:
-            thermal_penalty_terms = []
+        if soft_penalty_terms is None:
+            soft_penalty_terms = []
         state_vars_by_device = self._state_vars_by_device(components_by_device)
 
         for cw in constraint_windows:
@@ -610,6 +612,20 @@ class MILPCentralSolver:
                     target_kwh = storage.capacity * req.min_soc_pct / 100.0
                     if deadline_slot < n_slots:
                         model.constraint_windows.add(model.soc[cw.device_id, deadline_slot + 1] >= target_kwh)
+                    # FR-205: flex earliness cost — € per hour the delivery is
+                    # pulled forward from the deadline, weighted by the fraction
+                    # of the required charge delivered in each slot.
+                    required_kwh = target_kwh - self._initial_soc_kwh(storage, initial_state)
+                    if cw.flex_cost_per_hour_early > 0 and required_kwh > 1e-9 and storage.node is None:
+                        dt_hours = resolution_minutes / 60.0
+                        for t in range(min(deadline_slot + 1, n_slots)):
+                            earliness_h = (deadline_slot - t) * dt_hours
+                            if earliness_h <= 0:
+                                continue
+                            delivered_kwh = model.power_charge[cw.device_id, t] * dt_hours * storage.charge_efficiency
+                            soft_penalty_terms.append(
+                                cw.flex_cost_per_hour_early * earliness_h * delivered_kwh / required_kwh
+                            )
 
             elif isinstance(req, MinEnergyUntil):
                 # Cumulative energy must be >= target by deadline
@@ -618,6 +634,21 @@ class MILPCentralSolver:
                     sum(model.power[cw.device_id, t] * dt_hours for t in range(min(deadline_slot + 1, n_slots)))
                     >= req.min_energy_kwh
                 )
+                # FR-205: flex earliness cost (see MinSocUntil). Uses the charge
+                # leg for direct storage so discharge is never rewarded.
+                if cw.flex_cost_per_hour_early > 0 and req.min_energy_kwh > 0:
+                    storage = storage_components.get(cw.device_id)
+                    use_charge_leg = storage is not None and storage.node is None
+                    for t in range(min(deadline_slot + 1, n_slots)):
+                        earliness_h = (deadline_slot - t) * dt_hours
+                        if earliness_h <= 0:
+                            continue
+                        power_var = (
+                            model.power_charge[cw.device_id, t] if use_charge_leg else model.power[cw.device_id, t]
+                        )
+                        soft_penalty_terms.append(
+                            cw.flex_cost_per_hour_early * earliness_h * power_var * dt_hours / req.min_energy_kwh
+                        )
 
             elif isinstance(req, ReachMinTempOnce):
                 # Room must reach target_temp_c at least once before deadline.
@@ -648,7 +679,7 @@ class MILPCentralSolver:
                         model.constraint_windows.add(model.temp[node_id, t] + s_lo >= req.min_temp_c)
                         # T[t] - s_hi <= max_temp
                         model.constraint_windows.add(model.temp[node_id, t] - s_hi <= req.max_temp_c)
-                        thermal_penalty_terms.append(cw.priority_penalty * (s_lo + s_hi))
+                        soft_penalty_terms.append(cw.priority_penalty * (s_lo + s_hi))
 
             elif isinstance(req, MinRuntimePerDay):
                 # Sum of on-variables must be >= min_hours / resolution
