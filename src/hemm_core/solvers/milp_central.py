@@ -21,6 +21,7 @@ from hemm_core.manifest.components import (
     SourceSpec,
     StorageSpec,
     apply_generation_forecast,
+    apply_internal_gains,
 )
 from hemm_core.manifest.constraints import (
     ForbiddenWindow,
@@ -34,6 +35,7 @@ from hemm_core.manifest.constraints import (
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
 from hemm_core.manifest.validator import validate_constraint_targets
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.solvers.windows import partition_constraint_windows
 from hemm_core.time import Clock, WallClock
 
 # Default plan-change penalty weight (€/kW² per slot deviation from previous plan)
@@ -72,6 +74,8 @@ class MILPCentralSolver:
         time_limit_seconds: float = 60.0,
         *,
         feed_in_tariff: float | None = None,
+        grid_import_limit_kw: float | None = None,
+        grid_export_limit_kw: float | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._plan_change_penalty = plan_change_penalty
@@ -80,6 +84,16 @@ class MILPCentralSolver:
         # Export price (€/kWh). None → exports credited at the import price
         # (backward-compatible); set below the import price for realistic economics.
         self._feed_in_tariff = feed_in_tariff
+        # Connection/main-fuse limits (kW). None → unbounded (legacy). A §14a
+        # dimming order is expressible as a lowered import limit (FR-201).
+        if grid_import_limit_kw is not None and grid_import_limit_kw <= 0:
+            msg = f"grid_import_limit_kw must be positive, got {grid_import_limit_kw}"
+            raise ValueError(msg)
+        if grid_export_limit_kw is not None and grid_export_limit_kw <= 0:
+            msg = f"grid_export_limit_kw must be positive, got {grid_export_limit_kw}"
+            raise ValueError(msg)
+        self._grid_import_limit_kw = grid_import_limit_kw
+        self._grid_export_limit_kw = grid_export_limit_kw
         self._clock: Clock = clock if clock is not None else WallClock()
 
     @property
@@ -98,6 +112,7 @@ class MILPCentralSolver:
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
         initial_state: dict[str, dict[str, float]] | None = None,
+        internal_gains: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve the central MILP problem."""
         start_time = self._clock.monotonic()
@@ -125,7 +140,10 @@ class MILPCentralSolver:
         model.D = pyo.Set(initialize=device_ids)
 
         components_by_device: dict[str, list[ComponentSpec]] = {
-            manifest.device_id: apply_generation_forecast(list(manifest.to_components()), generation_forecast)
+            manifest.device_id: apply_internal_gains(
+                apply_generation_forecast(list(manifest.to_components()), generation_forecast),
+                internal_gains,
+            )
             for manifest in manifests
         }
         components = [
@@ -190,21 +208,28 @@ class MILPCentralSolver:
                     initial_state=initial_state,
                 )
 
+        # Partition windows: applied vs surfaced-as-ignored (FR-206) — impossible
+        # deadlines are rejected here, never clamped into the horizon.
+        applied_windows, ignored_windows = partition_constraint_windows(
+            constraint_windows, set(components_by_device), t0, horizon_minutes
+        )
+
         # Apply constraint windows (including thermal constraints)
         model.constraint_windows = pyo.ConstraintList()
         model.thermal_slack_lo = pyo.VarList(domain=pyo.NonNegativeReals)
         model.thermal_slack_hi = pyo.VarList(domain=pyo.NonNegativeReals)
         model.thermal_reached = pyo.VarList(domain=pyo.Binary)
-        thermal_penalty_terms: list[Any] = []
+        soft_penalty_terms: list[Any] = []
         self._apply_constraint_windows(
             model,
-            constraint_windows,
+            applied_windows,
             components_by_device,
             storage_components,
             t0,
             n_slots,
             resolution_minutes,
-            thermal_penalty_terms=thermal_penalty_terms,
+            soft_penalty_terms=soft_penalty_terms,
+            initial_state=initial_state,
         )
 
         # Grid settlement (FR-002): net house power per slot is split into
@@ -219,6 +244,13 @@ class MILPCentralSolver:
             model.grid_balance.add(
                 model.grid_import[t] - model.grid_export[t] == sum(model.power[d, t] for d in model.D)
             )
+            # FR-201: the connection limit bounds each leg; an impossible cap
+            # (e.g. fixed load above it) makes the solve INFEASIBLE — fail loud,
+            # never silently exceed the main fuse.
+            if self._grid_import_limit_kw is not None:
+                model.grid_balance.add(model.grid_import[t] <= self._grid_import_limit_kw)
+            if self._grid_export_limit_kw is not None:
+                model.grid_balance.add(model.grid_export[t] <= self._grid_export_limit_kw)
 
         # Objective: minimize energy cost + plan-change penalty
         prev_plan_map = self._build_prev_plan_map(previous_plans, device_ids, n_slots)
@@ -240,10 +272,10 @@ class MILPCentralSolver:
             change_penalty: Any = 0.0
             if prev_plan_map and self._plan_change_penalty > 0:
                 change_penalty = sum(self._plan_change_penalty * m.delta[d, t] for d in m.D for t in m.T)
-            # Thermal comfort violation penalty
+            # Soft penalties: thermal comfort violation + flex earliness cost
             comfort_penalty: Any = 0.0
-            if thermal_penalty_terms:
-                comfort_penalty = sum(thermal_penalty_terms)
+            if soft_penalty_terms:
+                comfort_penalty = sum(soft_penalty_terms)
             return energy_cost + change_penalty + comfort_penalty
 
         model.objective = pyo.Objective(rule=obj_rule, sense=pyo.minimize)
@@ -252,8 +284,10 @@ class MILPCentralSolver:
         solver = pyo.SolverFactory("appsi_highs")
         solver.options["time_limit"] = self._time_limit_seconds
 
+        # load_solutions=False so an infeasible model maps to INFEASIBLE instead
+        # of the appsi wrapper raising while trying to load a missing solution.
         try:
-            result = solver.solve(model, tee=False)
+            result = solver.solve(model, tee=False, load_solutions=False)
         except Exception as e:
             return SolverResult(
                 status=SolverStatus.ERROR,
@@ -270,7 +304,17 @@ class MILPCentralSolver:
                 diagnostics={"termination": str(result.solver.termination_condition)},
             )
 
-        # Extract plans
+        try:
+            model.solutions.load_from(result)
+        except Exception as e:
+            # e.g. a TIMEOUT with no incumbent — report honestly, never a stale plan.
+            return SolverResult(
+                status=SolverStatus.ERROR,
+                solve_time_seconds=self._clock.monotonic() - start_time,
+                diagnostics={"error": str(e), "termination": str(result.solver.termination_condition)},
+            )
+
+        # Extract plans — reason annotation only from windows that were applied
         plans = self._extract_plans(
             model,
             device_ids,
@@ -278,7 +322,7 @@ class MILPCentralSolver:
             t0,
             resolution_minutes,
             horizon_minutes,
-            constraint_windows=constraint_windows,
+            constraint_windows=applied_windows,
             prices=prices,
         )
 
@@ -291,7 +335,11 @@ class MILPCentralSolver:
             objective_value=obj_val,
             solve_time_seconds=solve_time,
             iterations=1,
-            diagnostics={"n_devices": len(device_ids), "n_slots": n_slots},
+            diagnostics={
+                "n_devices": len(device_ids),
+                "n_slots": n_slots,
+                "ignored_windows": ignored_windows,
+            },
         )
 
     def _align_prices(
@@ -341,10 +389,26 @@ class MILPCentralSolver:
             model.power_bounds.add(model.power[component.device_id, t] >= -upper * model.on[component.device_id, t])
 
     def _add_sink(self, model: pyo.ConcreteModel, component: ComponentSpec) -> None:
-        """Add a controllable or fixed sink primitive."""
+        """Add a controllable or fixed sink primitive.
+
+        For controllable sinks the minimum is semi-continuous (FR-205 min
+        modulation): the device is either off or runs at ≥ min_power_kw. Fixed
+        sinks keep the hard band (e.g. passive loads with min == max).
+        """
         if not isinstance(component, SinkSpec):
             raise TypeError(f"Expected SinkSpec, got {type(component).__name__}")
-        self._add_power_bounds(model, component.device_id, component.min_power_kw, component.max_power_kw)
+        lower = 0.0 if component.controllable else component.min_power_kw
+        self._add_power_bounds(model, component.device_id, lower, component.max_power_kw)
+        if component.controllable and component.min_power_kw > 0:
+            for t in model.T:
+                model.power_bounds.add(
+                    model.power[component.device_id, t] >= component.min_power_kw * model.on[component.device_id, t]
+                )
+                # Close the one-sided on/off link: power > 0 forces on = 1, so
+                # the min floor cannot be dodged with on = 0.
+                model.power_bounds.add(
+                    model.power[component.device_id, t] <= component.max_power_kw * model.on[component.device_id, t]
+                )
 
     def _add_storage(
         self,
@@ -374,6 +438,13 @@ class MILPCentralSolver:
                 model.component_constraints.add(
                     model.power_charge[component.device_id, t] <= max_charge * model.b_charge[component.device_id, t]
                 )
+                if component.min_charge_kw > 0:
+                    # FR-205: charging is semi-continuous — off, or ≥ the
+                    # charger's minimum (e.g. the 6 A IEC floor of a wallbox).
+                    model.component_constraints.add(
+                        model.power_charge[component.device_id, t]
+                        >= component.min_charge_kw * model.b_charge[component.device_id, t]
+                    )
                 model.component_constraints.add(
                     model.power_discharge[component.device_id, t]
                     <= max_discharge * (1 - model.b_charge[component.device_id, t])
@@ -431,6 +502,15 @@ class MILPCentralSolver:
         if not isinstance(component, ConverterSpec):
             raise TypeError(f"Expected ConverterSpec, got {type(component).__name__}")
         self._add_power_bounds(model, component.device_id, 0.0, component.max_input_kw)
+        if component.min_input_kw > 0:
+            # FR-205 min modulation: off, or at least the modulation floor.
+            for t in model.T:
+                model.power_bounds.add(
+                    model.power[component.device_id, t] >= component.min_input_kw * model.on[component.device_id, t]
+                )
+                model.power_bounds.add(
+                    model.power[component.device_id, t] <= component.max_input_kw * model.on[component.device_id, t]
+                )
 
     def _add_node(
         self,
@@ -480,12 +560,17 @@ class MILPCentralSolver:
         if not has_power_component:
             self._add_power_bounds(model, component.device_id, 0.0, 0.0)
 
+        gains = component.gains or []
         model.thermal_constraints.add(model.temp[component.device_id, 0] == initial)
         for t in range(n_slots):
             q_in: Any = 0.0
             for converter in converters:
                 ctx = outdoor_temps[t] if converter.factor_ctx == "outdoor_temp" else 0.0
                 q_in += model.power[converter.device_id, t] * converter.factor_at(ctx)
+            # Per-zone internal gains (FR-208); negative values model extraction
+            # such as a hot-water draw on a tank node (FR-207).
+            if gains:
+                q_in += gains[t] if t < len(gains) else gains[-1]
             t_out = outdoor_temps[t]
             model.thermal_constraints.add(
                 model.temp[component.device_id, t + 1]
@@ -503,11 +588,12 @@ class MILPCentralSolver:
         n_slots: int,
         resolution_minutes: int,
         *,
-        thermal_penalty_terms: list[Any] | None = None,
+        soft_penalty_terms: list[Any] | None = None,
+        initial_state: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Apply constraint windows to the Pyomo model."""
-        if thermal_penalty_terms is None:
-            thermal_penalty_terms = []
+        if soft_penalty_terms is None:
+            soft_penalty_terms = []
         state_vars_by_device = self._state_vars_by_device(components_by_device)
 
         for cw in constraint_windows:
@@ -532,6 +618,20 @@ class MILPCentralSolver:
                     target_kwh = storage.capacity * req.min_soc_pct / 100.0
                     if deadline_slot < n_slots:
                         model.constraint_windows.add(model.soc[cw.device_id, deadline_slot + 1] >= target_kwh)
+                    # FR-205: flex earliness cost — € per hour the delivery is
+                    # pulled forward from the deadline, weighted by the fraction
+                    # of the required charge delivered in each slot.
+                    required_kwh = target_kwh - self._initial_soc_kwh(storage, initial_state)
+                    if cw.flex_cost_per_hour_early > 0 and required_kwh > 1e-9 and storage.node is None:
+                        dt_hours = resolution_minutes / 60.0
+                        for t in range(min(deadline_slot + 1, n_slots)):
+                            earliness_h = (deadline_slot - t) * dt_hours
+                            if earliness_h <= 0:
+                                continue
+                            delivered_kwh = model.power_charge[cw.device_id, t] * dt_hours * storage.charge_efficiency
+                            soft_penalty_terms.append(
+                                cw.flex_cost_per_hour_early * earliness_h * delivered_kwh / required_kwh
+                            )
 
             elif isinstance(req, MinEnergyUntil):
                 # Cumulative energy must be >= target by deadline
@@ -540,6 +640,21 @@ class MILPCentralSolver:
                     sum(model.power[cw.device_id, t] * dt_hours for t in range(min(deadline_slot + 1, n_slots)))
                     >= req.min_energy_kwh
                 )
+                # FR-205: flex earliness cost (see MinSocUntil). Uses the charge
+                # leg for direct storage so discharge is never rewarded.
+                if cw.flex_cost_per_hour_early > 0 and req.min_energy_kwh > 0:
+                    maybe_storage = storage_components.get(cw.device_id)
+                    use_charge_leg = maybe_storage is not None and maybe_storage.node is None
+                    for t in range(min(deadline_slot + 1, n_slots)):
+                        earliness_h = (deadline_slot - t) * dt_hours
+                        if earliness_h <= 0:
+                            continue
+                        power_var = (
+                            model.power_charge[cw.device_id, t] if use_charge_leg else model.power[cw.device_id, t]
+                        )
+                        soft_penalty_terms.append(
+                            cw.flex_cost_per_hour_early * earliness_h * power_var * dt_hours / req.min_energy_kwh
+                        )
 
             elif isinstance(req, ReachMinTempOnce):
                 # Room must reach target_temp_c at least once before deadline.
@@ -570,7 +685,7 @@ class MILPCentralSolver:
                         model.constraint_windows.add(model.temp[node_id, t] + s_lo >= req.min_temp_c)
                         # T[t] - s_hi <= max_temp
                         model.constraint_windows.add(model.temp[node_id, t] - s_hi <= req.max_temp_c)
-                        thermal_penalty_terms.append(cw.priority_penalty * (s_lo + s_hi))
+                        soft_penalty_terms.append(cw.priority_penalty * (s_lo + s_hi))
 
             elif isinstance(req, MinRuntimePerDay):
                 # Sum of on-variables must be >= min_hours / resolution
@@ -673,12 +788,14 @@ class MILPCentralSolver:
                 for t in range(min(deadline_slot + 1, n_slots)):
                     constrained_slots.add((cw.device_id, t))
 
-        # Pre-compute cheap price threshold (bottom 25%)
+        # Pre-compute cheap/expensive price thresholds (bottom/top 25%)
         cheap_threshold: float | None = None
+        expensive_threshold: float | None = None
         if prices:
             sorted_prices = sorted(prices)
             q25_idx = max(0, len(sorted_prices) // 4 - 1)
             cheap_threshold = sorted_prices[q25_idx]
+            expensive_threshold = sorted_prices[-max(1, len(sorted_prices) // 4)]
 
         for did in device_ids:
             slots: list[PlanSlot] = []
@@ -701,6 +818,7 @@ class MILPCentralSolver:
                     constrained_slots,
                     prices,
                     cheap_threshold,
+                    expensive_threshold,
                 )
                 slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 
@@ -725,6 +843,7 @@ class MILPCentralSolver:
         constrained_slots: set[tuple[str, int]],
         prices: list[float] | None,
         cheap_threshold: float | None,
+        expensive_threshold: float | None,
     ) -> PlanReason:
         """Determine why the solver chose this setpoint for a slot."""
         # Device is effectively off → idle
@@ -735,8 +854,17 @@ class MILPCentralSolver:
         if (device_id, slot_idx) in constrained_slots:
             return PlanReason.CONSTRAINT
 
-        # Producing power (negative) → likely PV surplus driving battery discharge or similar
+        # Producing power (negative): discharge into a peak-price slot is grid
+        # arbitrage, not PV surplus — the battery convention is negative=discharge,
+        # so only low/mid-price production keeps the PV-surplus fallback.
         if power < -0.01:
+            if (
+                prices
+                and expensive_threshold is not None
+                and slot_idx < len(prices)
+                and prices[slot_idx] >= expensive_threshold
+            ):
+                return PlanReason.EXPENSIVE_GRID
             return PlanReason.PV_SURPLUS
 
         # Consuming in a cheap price slot

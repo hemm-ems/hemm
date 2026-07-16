@@ -65,8 +65,17 @@ DIVERGENCE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset()
 # resolves the tie differently per platform (macOS ARM capture vs Linux x86 CI).
 # Per-slot parity is skipped; total device energy AND the scenario objective
 # still must match the golden. full_house/dhw: slots 4 and 8 are both off-peak,
-# tie observed after the grid-settlement import/export split.
-DEGENERATE_TIE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset({("full_house", "dhw")})
+# tie observed after the grid-settlement import/export split. full_house EV +
+# battery: the RW2 EV charge-efficiency change (FR-203) made the night-slot
+# allocation degenerate — macOS and Linux HiGHS pick different equal-cost
+# vertices (energy swaps between slots 0 and 6); totals still must match.
+DEGENERATE_TIE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("full_house", "dhw"),
+        ("full_house", "ev_charger_garage"),
+        ("full_house", "house_battery"),
+    }
+)
 
 
 def _price_params(scenario: Scenario) -> dict[str, Any]:

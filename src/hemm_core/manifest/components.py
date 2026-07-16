@@ -65,6 +65,7 @@ class StorageSpec(ComponentSpec):
     primitive: Literal[Primitive.STORAGE] = Primitive.STORAGE
     capacity: float | None
     max_charge_kw: float | None = None
+    min_charge_kw: float = 0.0  # semi-continuous floor while charging (FR-205)
     max_discharge_kw: float = 0.0
     charge_efficiency: float = 1.0
     discharge_efficiency: float = 1.0
@@ -82,6 +83,7 @@ class ConverterSpec(ComponentSpec):
     input_bus: str = "elec"
     output_bus: str
     max_input_kw: float
+    min_input_kw: float = 0.0  # semi-continuous floor while on (FR-205 min modulation)
     factor_map: list[tuple[float, float]]
     factor_ctx: str = "outdoor_temp"
 
@@ -116,6 +118,10 @@ class NodeSpec(ComponentSpec):
     ambient_ctx: str = "outdoor_temp"
     comfort_band: tuple[float, float] | None = None
     initial: float | None = None
+    # Per-slot internal gain series in kW, attributed to THIS zone only
+    # (FR-208). Positive = heat gain (occupants, appliances); negative =
+    # extraction, e.g. a hot-water draw on a tank node (FR-207).
+    gains: list[float] | None = None
 
 
 def apply_generation_forecast(
@@ -136,6 +142,28 @@ def apply_generation_forecast(
         series = generation_forecast.get(component.device_id)
         if isinstance(component, SourceSpec) and component.forecast is None and series is not None:
             out.append(component.model_copy(update={"forecast": series}))
+        else:
+            out.append(component)
+    return out
+
+
+def apply_internal_gains(
+    components: list[ComponentSpec],
+    internal_gains: dict[str, list[float]] | None,
+) -> list[ComponentSpec]:
+    """Overlay per-zone internal-gain series onto thermal nodes (FR-207/208).
+
+    Keyed by the zone's device_id, so gains are attributed to exactly one
+    node — never duplicated into every room. A series already present on the
+    NodeSpec wins (test manifests pin their own).
+    """
+    if not internal_gains:
+        return components
+    out: list[ComponentSpec] = []
+    for component in components:
+        series = internal_gains.get(component.device_id)
+        if isinstance(component, NodeSpec) and component.gains is None and series is not None:
+            out.append(component.model_copy(update={"gains": series}))
         else:
             out.append(component)
     return out

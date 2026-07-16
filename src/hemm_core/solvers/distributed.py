@@ -7,6 +7,7 @@ Features: operating band, plan-change penalty, ADMM augmented Lagrangian.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -14,7 +15,10 @@ from typing import Any
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
 from hemm_core.solvers.consumers import ConsumerModel, get_consumer_model
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.solvers.windows import partition_constraint_windows
 from hemm_core.time import Clock, WallClock
+
+_LOGGER = logging.getLogger(__name__)
 
 # Convergence tolerance for total power imbalance (kW)
 DEFAULT_CONVERGENCE_TOL = 0.1
@@ -89,9 +93,16 @@ class DistributedSolver:
         weather_forecast: list[tuple[datetime, float]] | None = None,
         generation_forecast: dict[str, list[float]] | None = None,
         initial_state: dict[str, dict[str, float]] | None = None,
+        internal_gains: dict[str, list[float]] | None = None,
     ) -> SolverResult:
         """Solve via distributed price iteration."""
         start_time = self._clock.monotonic()
+
+        if internal_gains:
+            # Never silently ignore an input (FR-205 discipline): Backend B's
+            # consumers do not model zone dynamics yet — T404 (RW4) makes this
+            # backend consume real inputs or refuse the scenario.
+            _LOGGER.warning("Backend B does not model internal_gains yet (T404); the series is ignored")
 
         n_slots = horizon_minutes // resolution_minutes
         if n_slots <= 0:
@@ -104,6 +115,12 @@ class DistributedSolver:
         # the scalar constructor default for every slot, so Backend B behaviour is
         # unchanged when no forecast is passed.
         outdoor_temps = self._align_weather(weather_forecast, n_slots)
+
+        # Applicability partition shared with Backend A (FR-206): both backends
+        # must reject the same impossible-deadline windows or A/B diverges.
+        applied_windows, ignored_windows = partition_constraint_windows(
+            constraint_windows, {m.device_id for m in manifests}, t0, horizon_minutes
+        )
 
         # Create consumer models for each device
         consumers: list[tuple[str, ConsumerModel]] = []
@@ -121,7 +138,7 @@ class DistributedSolver:
             if consumer is not None:
                 consumers.append((did, consumer))
             # Gather per-device constraints
-            device_constraints[did] = [cw for cw in constraint_windows if cw.device_id == did]
+            device_constraints[did] = [cw for cw in applied_windows if cw.device_id == did]
 
         if not consumers:
             return SolverResult(
@@ -228,7 +245,7 @@ class DistributedSolver:
             n_slots,
             resolution_minutes,
             horizon_minutes,
-            constraint_windows=constraint_windows,
+            constraint_windows=applied_windows,
             prices=prices,
         )
 
@@ -254,6 +271,7 @@ class DistributedSolver:
                 "final_imbalance_kw": iteration_logs[-1].imbalance_kw if iteration_logs else 0.0,
                 "n_consumers": len(consumers),
                 "n_slots": n_slots,
+                "ignored_windows": ignored_windows,
             },
         )
 
@@ -305,12 +323,14 @@ class DistributedSolver:
                 for t in range(min(deadline_slot + 1, n_slots)):
                     constrained_slots.add((cw.device_id, t))
 
-        # Pre-compute cheap price threshold (bottom 25%)
+        # Pre-compute cheap/expensive price thresholds (bottom/top 25%)
         cheap_threshold: float | None = None
+        expensive_threshold: float | None = None
         if prices:
             sorted_prices = sorted(prices)
             q25_idx = max(0, len(sorted_prices) // 4 - 1)
             cheap_threshold = sorted_prices[q25_idx]
+            expensive_threshold = sorted_prices[-max(1, len(sorted_prices) // 4)]
 
         for did, _ in consumers:
             powers = device_powers[did]
@@ -327,6 +347,7 @@ class DistributedSolver:
                     constrained_slots,
                     prices,
                     cheap_threshold,
+                    expensive_threshold,
                 )
                 slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 
@@ -350,6 +371,7 @@ class DistributedSolver:
         constrained_slots: set[tuple[str, int]],
         prices: list[float] | None,
         cheap_threshold: float | None,
+        expensive_threshold: float | None,
     ) -> PlanReason:
         """Determine why the solver chose this setpoint for a slot."""
         if abs(power) < 0.01:
@@ -358,7 +380,16 @@ class DistributedSolver:
         if (device_id, slot_idx) in constrained_slots:
             return PlanReason.CONSTRAINT
 
+        # Negative = produce/discharge: peak-price slots are grid arbitrage
+        # (expensive_grid), not PV surplus (mirrors Backend A).
         if power < -0.01:
+            if (
+                prices
+                and expensive_threshold is not None
+                and slot_idx < len(prices)
+                and prices[slot_idx] >= expensive_threshold
+            ):
+                return PlanReason.EXPENSIVE_GRID
             return PlanReason.PV_SURPLUS
 
         if prices and cheap_threshold is not None and slot_idx < len(prices) and prices[slot_idx] <= cheap_threshold:

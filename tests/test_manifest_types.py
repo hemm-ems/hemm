@@ -153,13 +153,24 @@ class TestRoomManifest:
             thermal_mass_kwh_per_k=2.5,
             u_value_w_per_m2k=0.35,
             window_area_m2=8.0,
-            south_facing_windows=True,
             insulation_class="good",
             constraint_endpoints={"hold_temp_band": ">=1"},
             safe_default=_make_safe_default(),
         )
-        assert m.south_facing_windows is True
+        assert m.window_area_m2 == 8.0
         assert "hold_temp_band" in m.constraint_endpoints
+
+    @pytest.mark.unit
+    def test_unmodeled_solar_gains_rejected(self) -> None:
+        """FR-205: south_facing_windows would be a silent no-op — reject it."""
+        with pytest.raises(PydanticValidationError, match="south_facing_windows"):
+            RoomManifest(
+                device_id="room1",
+                name="Living Room",
+                floor_area_m2=35.0,
+                south_facing_windows=True,
+                safe_default=_make_safe_default(),
+            )
 
     @pytest.mark.unit
     def test_invalid_area(self) -> None:

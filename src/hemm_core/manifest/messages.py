@@ -18,6 +18,7 @@ class PlanReason(StrEnum):
 
     PV_SURPLUS = "pv_surplus"
     CHEAP_GRID = "cheap_grid"
+    EXPENSIVE_GRID = "expensive_grid"
     MANUAL = "manual"
     SAFETY_DEFAULT = "safety_default"
     CONSTRAINT = "constraint"
