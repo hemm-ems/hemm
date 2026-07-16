@@ -118,7 +118,7 @@ class _PrimitiveConsumer(ConsumerModel):
     ) -> list[float]:
         """Shade slot prices with the FR-205 flex earliness cost (sort-only).
 
-        Delivering 1 kWh at slot t costs an extra flex × hours-before-deadline
+        Delivering 1 kWh at slot t costs an extra flex x hours-before-deadline
         / required kWh — mirroring Backend A's objective term, so both backends
         prefer late delivery when the window prices earliness.
         """
@@ -133,8 +133,7 @@ class _PrimitiveConsumer(ConsumerModel):
         if flex <= 0 or required_kwh <= 1e-9:
             return list(prices)
         return [
-            price + flex * max(0.0, (deadline_slot - t) * dt_hours) / required_kwh
-            for t, price in enumerate(prices)
+            price + flex * max(0.0, (deadline_slot - t) * dt_hours) / required_kwh for t, price in enumerate(prices)
         ]
 
     @staticmethod

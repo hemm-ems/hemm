@@ -252,10 +252,7 @@ class HeatPumpManifest(_ManifestBase):
         # FR-205: defrost lockout has no solver model; a non-zero value would be
         # a silent no-op. min_modulation_pct IS enforced (semi-continuous floor).
         if self.defrost_lockout_minutes != 0:
-            msg = (
-                "defrost_lockout_minutes is not modeled by any solver backend yet; "
-                "set it to 0 (FR-205)"
-            )
+            msg = "defrost_lockout_minutes is not modeled by any solver backend yet; set it to 0 (FR-205)"
             raise ValueError(msg)
         return self
 
@@ -405,13 +402,13 @@ class EVChargerManifest(_ManifestBase):
 
     @model_validator(mode="after")
     def _validate_phase_consistency(self) -> EVChargerManifest:
-        # FR-205: phases must bind. 32 A × 230 V per phase caps the plausible
+        # FR-205: phases must bind. 32 A x 230 V per phase caps the plausible
         # charge power; a 1-phase 11 kW claim is a manifest error, not a hint.
         max_plausible_kw = self.phases * 32 * 230 / 1000.0
         if self.max_charge_kw > max_plausible_kw + 1e-9:
             msg = (
                 f"max_charge_kw={self.max_charge_kw} exceeds {max_plausible_kw:.2f} kW "
-                f"(32 A × 230 V × {self.phases} phase(s)); fix phases or max_charge_kw (FR-205)"
+                f"(32 A x 230 V x {self.phases} phase(s)); fix phases or max_charge_kw (FR-205)"
             )
             raise ValueError(msg)
         if self.min_charge_kw > self.max_charge_kw:

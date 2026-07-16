@@ -19,8 +19,10 @@ from hemm_core.manifest.messages import ConstraintWindow, PlanReason
 from hemm_core.manifest.types import (
     BatteryManifest,
     EVChargerManifest,
+    HeatPumpManifest,
     PassiveLoadManifest,
     PVForecastManifest,
+    RoomManifest,
     WaterHeaterManifest,
 )
 from hemm_core.solvers.consumers import get_consumer_model
@@ -66,7 +68,7 @@ class TestExpensiveGridReason:
     def test_peak_discharge_is_expensive_grid_not_pv_surplus(self) -> None:
         """A battery-only arbitrage plan labels peak discharge expensive_grid.
 
-        Repro of the gs shadow-plan bug: the 19:45–21:15 −4 kW discharge slots
+        Repro of the gs shadow-plan bug: the 19:45-21:15 -4 kW discharge slots
         carried reason "pv_surplus" although there is no PV in the model at all.
         """
         solver = MILPCentralSolver()
@@ -664,9 +666,7 @@ class TestDeclaredPhysicsHonoredOrRejected:
         assert all(abs(p) < 0.01 for p in powers[:48])
 
 
-def _room(device_id: str) -> "RoomManifest":
-    from hemm_core.manifest.types import RoomManifest
-
+def _room(device_id: str) -> RoomManifest:
     return RoomManifest(
         device_id=device_id,
         name=device_id,
@@ -677,9 +677,7 @@ def _room(device_id: str) -> "RoomManifest":
     )
 
 
-def _room_hp(device_id: str, room_id: str) -> "HeatPumpManifest":
-    from hemm_core.manifest.types import HeatPumpManifest
-
+def _room_hp(device_id: str, room_id: str) -> HeatPumpManifest:
     return HeatPumpManifest(
         device_id=device_id,
         name=device_id,

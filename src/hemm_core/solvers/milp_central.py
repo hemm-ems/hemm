@@ -402,14 +402,12 @@ class MILPCentralSolver:
         if component.controllable and component.min_power_kw > 0:
             for t in model.T:
                 model.power_bounds.add(
-                    model.power[component.device_id, t]
-                    >= component.min_power_kw * model.on[component.device_id, t]
+                    model.power[component.device_id, t] >= component.min_power_kw * model.on[component.device_id, t]
                 )
                 # Close the one-sided on/off link: power > 0 forces on = 1, so
                 # the min floor cannot be dodged with on = 0.
                 model.power_bounds.add(
-                    model.power[component.device_id, t]
-                    <= component.max_power_kw * model.on[component.device_id, t]
+                    model.power[component.device_id, t] <= component.max_power_kw * model.on[component.device_id, t]
                 )
 
     def _add_storage(
@@ -508,12 +506,10 @@ class MILPCentralSolver:
             # FR-205 min modulation: off, or at least the modulation floor.
             for t in model.T:
                 model.power_bounds.add(
-                    model.power[component.device_id, t]
-                    >= component.min_input_kw * model.on[component.device_id, t]
+                    model.power[component.device_id, t] >= component.min_input_kw * model.on[component.device_id, t]
                 )
                 model.power_bounds.add(
-                    model.power[component.device_id, t]
-                    <= component.max_input_kw * model.on[component.device_id, t]
+                    model.power[component.device_id, t] <= component.max_input_kw * model.on[component.device_id, t]
                 )
 
     def _add_node(
@@ -647,8 +643,8 @@ class MILPCentralSolver:
                 # FR-205: flex earliness cost (see MinSocUntil). Uses the charge
                 # leg for direct storage so discharge is never rewarded.
                 if cw.flex_cost_per_hour_early > 0 and req.min_energy_kwh > 0:
-                    storage = storage_components.get(cw.device_id)
-                    use_charge_leg = storage is not None and storage.node is None
+                    maybe_storage = storage_components.get(cw.device_id)
+                    use_charge_leg = maybe_storage is not None and maybe_storage.node is None
                     for t in range(min(deadline_slot + 1, n_slots)):
                         earliness_h = (deadline_slot - t) * dt_hours
                         if earliness_h <= 0:
