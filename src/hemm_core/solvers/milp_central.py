@@ -673,12 +673,14 @@ class MILPCentralSolver:
                 for t in range(min(deadline_slot + 1, n_slots)):
                     constrained_slots.add((cw.device_id, t))
 
-        # Pre-compute cheap price threshold (bottom 25%)
+        # Pre-compute cheap/expensive price thresholds (bottom/top 25%)
         cheap_threshold: float | None = None
+        expensive_threshold: float | None = None
         if prices:
             sorted_prices = sorted(prices)
             q25_idx = max(0, len(sorted_prices) // 4 - 1)
             cheap_threshold = sorted_prices[q25_idx]
+            expensive_threshold = sorted_prices[-max(1, len(sorted_prices) // 4)]
 
         for did in device_ids:
             slots: list[PlanSlot] = []
@@ -701,6 +703,7 @@ class MILPCentralSolver:
                     constrained_slots,
                     prices,
                     cheap_threshold,
+                    expensive_threshold,
                 )
                 slots.append(PlanSlot(start=start, end=end, power_kw=power, mode=mode, reason=reason))
 
@@ -725,6 +728,7 @@ class MILPCentralSolver:
         constrained_slots: set[tuple[str, int]],
         prices: list[float] | None,
         cheap_threshold: float | None,
+        expensive_threshold: float | None,
     ) -> PlanReason:
         """Determine why the solver chose this setpoint for a slot."""
         # Device is effectively off → idle
@@ -735,8 +739,17 @@ class MILPCentralSolver:
         if (device_id, slot_idx) in constrained_slots:
             return PlanReason.CONSTRAINT
 
-        # Producing power (negative) → likely PV surplus driving battery discharge or similar
+        # Producing power (negative): discharge into a peak-price slot is grid
+        # arbitrage, not PV surplus — the battery convention is negative=discharge,
+        # so only low/mid-price production keeps the PV-surplus fallback.
         if power < -0.01:
+            if (
+                prices
+                and expensive_threshold is not None
+                and slot_idx < len(prices)
+                and prices[slot_idx] >= expensive_threshold
+            ):
+                return PlanReason.EXPENSIVE_GRID
             return PlanReason.PV_SURPLUS
 
         # Consuming in a cheap price slot

@@ -286,8 +286,8 @@ class TestPlanReason:
 
     @pytest.mark.unit
     def test_plan_reason_enum_values(self) -> None:
-        """All 6 reason values are present."""
-        expected = {"pv_surplus", "cheap_grid", "manual", "safety_default", "constraint", "idle"}
+        """All 7 reason values are present."""
+        expected = {"pv_surplus", "cheap_grid", "expensive_grid", "manual", "safety_default", "constraint", "idle"}
         assert {r.value for r in PlanReason} == expected
 
     @pytest.mark.unit
