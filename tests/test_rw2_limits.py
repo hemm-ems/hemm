@@ -348,3 +348,56 @@ class TestStorageLosses:
         lossy = solve_energy(0.8)
         assert lossless > 0
         assert lossy > lossless * 1.15  # 1/0.8 = 1.25 nominal, big-M slack tolerance
+
+
+class TestTerminalNeutrality:
+    """FR-204 — the end-of-horizon SoC floor tracks the measured start, not 50 %."""
+
+    @pytest.mark.unit
+    def test_low_start_is_not_force_charged_to_half(self) -> None:
+        """A battery measured at 20 % on a flat price stays idle (no fictitious 50 % floor)."""
+        flat = [(_T0 + timedelta(minutes=15 * i), 0.30) for i in range(96)]
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[],
+            price_forecast=flat,
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            initial_state={"bat": {"soc_kwh": 2.0}},
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert all(abs(s.power_kw) < 0.01 for s in result.plans[0].slots)
+
+    @pytest.mark.unit
+    def test_arbitrage_ends_at_or_above_measured_start(self) -> None:
+        """Peak discharge is recharged: final SoC ≥ the measured 8.1 kWh start."""
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            initial_state={"bat": {"soc_kwh": 8.1}},
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        soc = 8.1
+        for s in result.plans[0].slots:
+            if s.power_kw >= 0:
+                soc += s.power_kw * 0.25 * 0.95
+            else:
+                soc += s.power_kw * 0.25 / 0.95
+        assert soc >= 8.1 - 1e-6
+
+    @pytest.mark.unit
+    def test_backend_b_terminal_floor_tracks_start(self) -> None:
+        consumer = get_consumer_model(_battery(), initial_state={"soc_kwh": 8.1})
+        assert consumer is not None
+        prices = [p for _, p in _valley_peak_prices()]
+        powers = consumer.respond_to_prices(prices, 96, 15, [], _T0)
+        level = 8.1
+        for p in powers:
+            level += p * 0.25 * 0.95 if p >= 0 else p * 0.25 / 0.95
+        # The DP plans on a ~0.1 kWh level grid, so a continuous replay drifts a
+        # few grid steps over 96 slots. 0.5 kWh of slack still cleanly separates
+        # the anchored floor (ends ≈ 8.1) from the old 50 % bug (would end ≈ 5.0).
+        assert level >= 8.1 - 0.5
