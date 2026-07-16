@@ -704,7 +704,10 @@ class TestThermalModel:
         prices = _make_price_forecast(96, base=0.30)
         weather = _make_cold_weather(96)
 
-        deadline = datetime(2026, 1, 16, 0, 0, tzinfo=UTC)
+        # Hold the band across the whole visible day. The old value (2026-01-16)
+        # predated the price series and only "worked" through the clamp-to-slot-0
+        # behavior that FR-206 removed.
+        deadline = prices[0][0] + timedelta(hours=24)
         cw = ConstraintWindow(
             window_id="comfort",
             device_id="test_room",

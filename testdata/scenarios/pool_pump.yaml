@@ -22,10 +22,10 @@ manifests:
 constraint_windows:
   - window_id: pool_pump_min_energy
     device_id: pool_pump
-    # Deliberately absolute and beyond the horizon: this scenario exercises the
-    # "window active for the whole sim" shape. Rots in 2030 — the FR-012
-    # fail-loud guard will catch it then; don't copy this pattern elsewhere.
-    deadline: "2030-01-01T04:00:00+00:00"
+    # Whole-horizon demand window. Was an absolute year-2030 deadline relying on
+    # the old clamp-to-horizon behavior; FR-206 now rejects demand deadlines
+    # beyond the horizon instead of clamping, so express the intent directly.
+    deadline_offset_hours: 4
     requirement:
       type: min_energy_until
       min_energy_kwh: 1.2

@@ -14,6 +14,7 @@ from typing import Any
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
 from hemm_core.solvers.consumers import ConsumerModel, get_consumer_model
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.solvers.windows import partition_constraint_windows
 from hemm_core.time import Clock, WallClock
 
 # Convergence tolerance for total power imbalance (kW)
@@ -105,6 +106,12 @@ class DistributedSolver:
         # unchanged when no forecast is passed.
         outdoor_temps = self._align_weather(weather_forecast, n_slots)
 
+        # Applicability partition shared with Backend A (FR-206): both backends
+        # must reject the same impossible-deadline windows or A/B diverges.
+        applied_windows, ignored_windows = partition_constraint_windows(
+            constraint_windows, {m.device_id for m in manifests}, t0, horizon_minutes
+        )
+
         # Create consumer models for each device
         consumers: list[tuple[str, ConsumerModel]] = []
         device_constraints: dict[str, list[ConstraintWindow]] = {}
@@ -121,7 +128,7 @@ class DistributedSolver:
             if consumer is not None:
                 consumers.append((did, consumer))
             # Gather per-device constraints
-            device_constraints[did] = [cw for cw in constraint_windows if cw.device_id == did]
+            device_constraints[did] = [cw for cw in applied_windows if cw.device_id == did]
 
         if not consumers:
             return SolverResult(
@@ -228,7 +235,7 @@ class DistributedSolver:
             n_slots,
             resolution_minutes,
             horizon_minutes,
-            constraint_windows=constraint_windows,
+            constraint_windows=applied_windows,
             prices=prices,
         )
 
@@ -254,6 +261,7 @@ class DistributedSolver:
                 "final_imbalance_kw": iteration_logs[-1].imbalance_kw if iteration_logs else 0.0,
                 "n_consumers": len(consumers),
                 "n_slots": n_slots,
+                "ignored_windows": ignored_windows,
             },
         )
 

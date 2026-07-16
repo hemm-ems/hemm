@@ -34,6 +34,7 @@ from hemm_core.manifest.constraints import (
 from hemm_core.manifest.messages import ConstraintWindow, PlanMessage, PlanReason, PlanSlot
 from hemm_core.manifest.validator import validate_constraint_targets
 from hemm_core.solvers.protocol import SolverResult, SolverStatus
+from hemm_core.solvers.windows import partition_constraint_windows
 from hemm_core.time import Clock, WallClock
 
 # Default plan-change penalty weight (€/kW² per slot deviation from previous plan)
@@ -202,6 +203,12 @@ class MILPCentralSolver:
                     initial_state=initial_state,
                 )
 
+        # Partition windows: applied vs surfaced-as-ignored (FR-206) — impossible
+        # deadlines are rejected here, never clamped into the horizon.
+        applied_windows, ignored_windows = partition_constraint_windows(
+            constraint_windows, set(components_by_device), t0, horizon_minutes
+        )
+
         # Apply constraint windows (including thermal constraints)
         model.constraint_windows = pyo.ConstraintList()
         model.thermal_slack_lo = pyo.VarList(domain=pyo.NonNegativeReals)
@@ -210,7 +217,7 @@ class MILPCentralSolver:
         thermal_penalty_terms: list[Any] = []
         self._apply_constraint_windows(
             model,
-            constraint_windows,
+            applied_windows,
             components_by_device,
             storage_components,
             t0,
@@ -301,7 +308,7 @@ class MILPCentralSolver:
                 diagnostics={"error": str(e), "termination": str(result.solver.termination_condition)},
             )
 
-        # Extract plans
+        # Extract plans — reason annotation only from windows that were applied
         plans = self._extract_plans(
             model,
             device_ids,
@@ -309,7 +316,7 @@ class MILPCentralSolver:
             t0,
             resolution_minutes,
             horizon_minutes,
-            constraint_windows=constraint_windows,
+            constraint_windows=applied_windows,
             prices=prices,
         )
 
@@ -322,7 +329,11 @@ class MILPCentralSolver:
             objective_value=obj_val,
             solve_time_seconds=solve_time,
             iterations=1,
-            diagnostics={"n_devices": len(device_ids), "n_slots": n_slots},
+            diagnostics={
+                "n_devices": len(device_ids),
+                "n_slots": n_slots,
+                "ignored_windows": ignored_windows,
+            },
         )
 
     def _align_prices(

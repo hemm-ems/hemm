@@ -401,3 +401,98 @@ class TestTerminalNeutrality:
         # few grid steps over 96 slots. 0.5 kWh of slack still cleanly separates
         # the anchored floor (ends ≈ 8.1) from the old 50 % bug (would end ≈ 5.0).
         assert level >= 8.1 - 0.5
+
+
+def _flat_prices(n: int = 96, value: float = 0.30) -> list[tuple[datetime, float]]:
+    return [(_T0 + timedelta(minutes=15 * i), value) for i in range(n)]
+
+
+def _soc_window(deadline: datetime, device_id: str = "bat", pct: float = 80.0) -> ConstraintWindow:
+    return ConstraintWindow(
+        window_id="w1",
+        device_id=device_id,
+        deadline=deadline,
+        requirement=MinSocUntil(min_soc_pct=pct),
+    )
+
+
+class TestIgnoredWindows:
+    """FR-206 — windows the solver cannot apply are surfaced, never clamped."""
+
+    @pytest.mark.unit
+    def test_past_deadline_is_rejected_and_surfaced(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A deadline before the horizon start used to clamp to slot 0 — now it is ignored."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="hemm_core.solvers.windows"):
+            result = MILPCentralSolver().solve(
+                manifests=[_battery()],
+                constraint_windows=[_soc_window(_T0 - timedelta(hours=2))],
+                price_forecast=_flat_prices(),
+                horizon_minutes=1440,
+                resolution_minutes=15,
+                initial_state={"bat": {"soc_kwh": 2.0}},
+            )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        ignored = result.diagnostics["ignored_windows"]
+        assert ignored == [
+            {
+                "window_id": "w1",
+                "device_id": "bat",
+                "requirement": "min_soc_until",
+                "reason": "deadline_in_past",
+            }
+        ]
+        # Not applied: flat price + low start → the plan stays idle.
+        assert all(abs(s.power_kw) < 0.01 for s in result.plans[0].slots)
+        assert not any(s.reason == PlanReason.CONSTRAINT for s in result.plans[0].slots)
+        assert "Ignoring constraint window 'w1'" in caplog.text
+
+    @pytest.mark.unit
+    def test_demand_deadline_beyond_horizon_is_not_pulled_forward(self) -> None:
+        """A 30 h SoC deadline on a 24 h horizon used to be forced by end-of-horizon."""
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[_soc_window(_T0 + timedelta(hours=30))],
+            price_forecast=_flat_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+            initial_state={"bat": {"soc_kwh": 2.0}},
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert [w["reason"] for w in result.diagnostics["ignored_windows"]] == ["deadline_beyond_horizon"]
+        assert all(abs(s.power_kw) < 0.01 for s in result.plans[0].slots)
+
+    @pytest.mark.unit
+    def test_restrictive_window_beyond_horizon_still_applies(self) -> None:
+        """A forbidden window spanning past the horizon truncates safely — not ignored."""
+        from hemm_core.manifest.constraints import ForbiddenWindow
+
+        cw = ConstraintWindow(
+            window_id="lockout",
+            device_id="bat",
+            deadline=_T0 + timedelta(hours=48),
+            requirement=ForbiddenWindow(),
+        )
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[cw],
+            price_forecast=_valley_peak_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.diagnostics["ignored_windows"] == []
+        assert all(abs(s.power_kw) < 0.01 for s in result.plans[0].slots)
+
+    @pytest.mark.unit
+    def test_in_horizon_window_reports_nothing_ignored(self) -> None:
+        result = MILPCentralSolver().solve(
+            manifests=[_battery()],
+            constraint_windows=[_soc_window(_T0 + timedelta(hours=12))],
+            price_forecast=_flat_prices(),
+            horizon_minutes=1440,
+            resolution_minutes=15,
+        )
+        assert result.status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+        assert result.diagnostics["ignored_windows"] == []
