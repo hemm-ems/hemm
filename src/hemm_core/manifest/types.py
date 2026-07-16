@@ -259,6 +259,12 @@ class WaterHeaterManifest(_ManifestBase):
     standby_loss_w: float = Field(default=50, ge=0, description="Standby heat loss in Watts")
     insulation_class: str | None = Field(default=None, description="'good', 'medium', 'poor'")
     loss_coefficient_w_per_k: float | None = Field(default=None, gt=0)
+    heating_efficiency: float = Field(
+        default=0.98,
+        gt=0,
+        le=1,
+        description="Electrical-to-tank heating efficiency (element + piping losses)",
+    )
 
     def to_components(self) -> list[ComponentSpec]:
         node_id = f"thermal:{self.device_id}"
@@ -267,6 +273,8 @@ class WaterHeaterManifest(_ManifestBase):
         if self.loss_coefficient_w_per_k is not None:
             ua = self.loss_coefficient_w_per_k / 1000.0
 
+        # heating_efficiency binds on both energy paths: the converter factor
+        # (node temperature q_in) and the storage charge leg (stored energy).
         return [
             NodeSpec(
                 device_id=self.device_id,
@@ -282,13 +290,14 @@ class WaterHeaterManifest(_ManifestBase):
                 device_id=self.device_id,
                 output_bus=node_id,
                 max_input_kw=self.max_power_kw,
-                factor_map=[(0.0, 1.0)],
+                factor_map=[(0.0, self.heating_efficiency)],
                 factor_ctx="none",
             ),
             StorageSpec(
                 device_id=self.device_id,
                 node=node_id,
                 capacity=thermal_mass,
+                charge_efficiency=self.heating_efficiency,
                 leakage=self.standby_loss_w / 1000.0,
             ),
         ]
@@ -353,13 +362,22 @@ class EVChargerManifest(_ManifestBase):
     plug_state_entity: str | None = Field(default=None, description="HA entity for plug-in state")
     soc_entity: str | None = Field(default=None, description="HA entity for current SoC")
     battery_capacity_kwh: float | None = Field(default=None, gt=0, description="EV battery capacity")
+    charge_efficiency: float = Field(
+        default=0.9,
+        gt=0,
+        le=1,
+        description="Grid-to-EV-battery charging efficiency (onboard AC charger + cable losses)",
+    )
 
     def to_components(self) -> list[ComponentSpec]:
+        # charge_only: no V2G path is modeled, so there is deliberately no
+        # discharge_efficiency field (it would be accepted-but-ignored, FR-205).
         return [
             StorageSpec(
                 device_id=self.device_id,
                 capacity=self.battery_capacity_kwh,
                 max_charge_kw=self.max_charge_kw,
+                charge_efficiency=self.charge_efficiency,
                 charge_only=True,
                 max_level=self.battery_capacity_kwh,
                 min_level=0.0,
